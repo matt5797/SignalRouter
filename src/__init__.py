@@ -13,7 +13,7 @@ from .models import TradeSignal, Position, TradeOrder, TransitionType, TradeStat
 from .database import TradingDB
 from .config import ConfigLoader, AccountConfig, StrategyConfig
 from .trading import (
-    Broker, Account, AccountType, TradeExecutor,
+    Broker, Account, AccountType, TradeExecutor, PositionManager,
     TradingError, BrokerError, AccountError, OrderError, RiskManagementError
 )
 
@@ -39,6 +39,7 @@ __all__ = [
     'Account',
     'AccountType', 
     'TradeExecutor',
+    'PositionManager',
     
     # 예외
     'TradingError',

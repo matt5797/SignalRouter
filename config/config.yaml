@@ -1,0 +1,103 @@
+# SignalRouter 자동매매 시스템 설정
+
+# 데이터베이스 설정
+database:
+  path: "trading.db"
+  backup_enabled: true
+  backup_interval_hours: 6
+
+# 웹훅 서버 설정
+webhook:
+  host: "0.0.0.0"
+  port: 8000
+  secret_key: "your-secret-key-here"
+  allowed_ips: []  # 빈 리스트면 모든 IP 허용
+
+# 계좌 설정
+accounts:
+  stock_real:
+    name: "주식 실전 계좌"
+    type: "STOCK"
+    secret_file: "/config/stock_real.json"
+    is_virtual: false
+    is_active: true
+  
+  futures_real:
+    name: "선물 실전 계좌"
+    type: "FUTURES"
+    secret_file: "/config/futures_real.json"
+    is_virtual: false
+    is_active: true
+  
+  stock_virtual:
+    name: "주식 모의 계좌"
+    type: "STOCK"
+    secret_file: "/config/stock_virtual.json"
+    is_virtual: true
+    is_active: true
+
+# 전략별 설정
+strategies:
+  KOSPI_TREND:
+    account_id: "stock_real"
+    webhook_token: "webhook_token_1"
+    max_position_ratio: 0.15  # 계좌의 15%까지
+    max_daily_loss: 500000    # 일일 최대 손실 50만원
+    is_active: true
+  
+  FUTURES_MOMENTUM:
+    account_id: "futures_real"
+    webhook_token: "webhook_token_2"
+    max_position_ratio: 0.25  # 계좌의 25%까지
+    max_daily_loss: 300000    # 일일 최대 손실 30만원
+    is_active: true
+  
+  TEST_STRATEGY:
+    account_id: "stock_virtual"
+    webhook_token: "webhook_token_3"
+    max_position_ratio: 0.10  # 계좌의 10%까지
+    max_daily_loss: 100000    # 일일 최대 손실 10만원
+    is_active: true
+
+# 리스크 관리 설정
+risk_management:
+  # 전역 설정
+  global_max_daily_loss: 1000000  # 전체 계좌 일일 최대 손실
+  position_timeout_seconds: 30    # 포지션 전환 대기 시간
+  order_retry_count: 3           # 주문 재시도 횟수
+  order_retry_delay_seconds: 5   # 재시도 간격
+  
+  # 거래 시간 제한
+  trading_hours:
+    start_time: "09:00"
+    end_time: "15:20"
+    timezone: "Asia/Seoul"
+
+# 로깅 설정
+logging:
+  level: "INFO"
+  file_path: "logs/trading.log"
+  max_file_size_mb: 10
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# 대시보드 설정
+dashboard:
+  host: "0.0.0.0"
+  port: 8501
+  title: "SignalRouter Dashboard"
+  refresh_interval_seconds: 5
+
+# 알림 설정 (향후 확장용)
+notifications:
+  enabled: false
+  slack_webhook: ""
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+
+# PyKis 관련 설정
+pykis:
+  keep_token: true
+  token_path: "/config/tokens/"
+  retry_count: 3
+  timeout_seconds: 10

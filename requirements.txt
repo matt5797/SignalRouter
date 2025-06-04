@@ -1,0 +1,18 @@
+# SignalRouter 자동매매 시스템 의존성
+
+# Core dependencies
+python-kis>=2.0.0          # 한국투자증권 API
+fastapi>=0.100.0           # 웹훅 서버
+uvicorn>=0.23.0            # ASGI 서버  
+streamlit>=1.25.0          # 대시보드
+pyyaml>=6.0                # 설정 파일
+
+# Development
+pytest>=7.0.0              # 테스팅
+pytest-asyncio>=0.21.0     # 비동기 테스트
+black>=23.0.0              # 코드 포매팅
+flake8>=6.0.0              # 린터
+
+# Optional
+requests>=2.31.0           # HTTP 요청
+pandas>=2.0.0              # 데이터 분석 (대시보드용)

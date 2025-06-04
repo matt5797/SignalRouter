@@ -2,7 +2,7 @@
 
 # 데이터베이스 설정
 database:
-  path: "trading.db"
+  path: "data/trading.db"
   backup_enabled: true
   backup_interval_hours: 6
 
@@ -15,24 +15,31 @@ webhook:
 
 # 계좌 설정
 accounts:
-  stock_real:
-    name: "주식 실전 계좌"
+  stock_real_01:
+    name: "주식 실전 계좌 01"
     type: "STOCK"
-    secret_file: "/config/stock_real.json"
+    secret_file: "secrets/stock_real_01.json"
     is_virtual: false
     is_active: true
   
-  futures_real:
-    name: "선물 실전 계좌"
+  futures_real_01:
+    name: "선물 실전 계좌 01"
     type: "FUTURES"
-    secret_file: "/config/futures_real.json"
+    secret_file: "secrets/futures_real_01.json"
     is_virtual: false
     is_active: true
   
-  stock_virtual:
-    name: "주식 모의 계좌"
+  stock_virtual_01:
+    name: "주식 모의 계좌 01"
     type: "STOCK"
-    secret_file: "/config/stock_virtual.json"
+    secret_file: "secrets/stock_virtual_01.json"
+    is_virtual: true
+    is_active: true
+
+  futures_virtual_01:
+    name: "선물 모의 계좌 01"
+    type: "FUTURES"
+    secret_file: "secrets/futures_virtual_01.json"
     is_virtual: true
     is_active: true
 
@@ -41,36 +48,36 @@ strategies:
   KOSPI_TREND:
     account_id: "stock_real"
     webhook_token: "webhook_token_1"
-    max_position_ratio: 0.15  # 계좌의 15%까지
-    max_daily_loss: 500000    # 일일 최대 손실 50만원
-    is_active: true
+    max_position_ratio: 1
+    max_daily_loss: 5000000
+    is_active: false
   
   FUTURES_MOMENTUM:
     account_id: "futures_real"
     webhook_token: "webhook_token_2"
-    max_position_ratio: 0.25  # 계좌의 25%까지
-    max_daily_loss: 300000    # 일일 최대 손실 30만원
-    is_active: true
+    max_position_ratio: 1
+    max_daily_loss: 3000000
+    is_active: false
   
   TEST_STRATEGY:
     account_id: "stock_virtual"
     webhook_token: "webhook_token_3"
-    max_position_ratio: 0.10  # 계좌의 10%까지
-    max_daily_loss: 100000    # 일일 최대 손실 10만원
-    is_active: true
+    max_position_ratio: 1
+    max_daily_loss: 1000000
+    is_active: false
 
 # 리스크 관리 설정
 risk_management:
   # 전역 설정
-  global_max_daily_loss: 1000000  # 전체 계좌 일일 최대 손실
-  position_timeout_seconds: 30    # 포지션 전환 대기 시간
+  global_max_daily_loss: 10000000  # 전체 계좌 일일 최대 손실
+  position_timeout_seconds: 60    # 포지션 전환 대기 시간
   order_retry_count: 3           # 주문 재시도 횟수
   order_retry_delay_seconds: 5   # 재시도 간격
   
   # 거래 시간 제한
   trading_hours:
-    start_time: "09:00"
-    end_time: "15:20"
+    start_time: "05:00"
+    end_time: "09:00"
     timezone: "Asia/Seoul"
 
 # 로깅 설정
@@ -98,6 +105,6 @@ notifications:
 # PyKis 관련 설정
 pykis:
   keep_token: true
-  token_path: "/config/tokens/"
+  token_path: "config/tokens/"
   retry_count: 3
   timeout_seconds: 10

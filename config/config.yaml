@@ -46,25 +46,25 @@ accounts:
 # 전략별 설정
 strategies:
   KOSPI_TREND:
-    account_id: "stock_real"
+    account_id: "stock_real_01"
     webhook_token: "webhook_token_1"
     max_position_ratio: 1
     max_daily_loss: 5000000
     is_active: false
   
   FUTURES_MOMENTUM:
-    account_id: "futures_real"
+    account_id: "futures_real_01"
     webhook_token: "webhook_token_2"
     max_position_ratio: 1
     max_daily_loss: 3000000
     is_active: false
   
   TEST_STRATEGY:
-    account_id: "stock_virtual"
+    account_id: "stock_virtual_01"
     webhook_token: "webhook_token_3"
     max_position_ratio: 1
     max_daily_loss: 1000000
-    is_active: false
+    is_active: true
 
 # 리스크 관리 설정
 risk_management:

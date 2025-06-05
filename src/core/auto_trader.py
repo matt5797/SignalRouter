@@ -122,6 +122,30 @@ class AutoTrader:
         accounts = {}
         account_configs = self.config.get_all_accounts()
         
+        # 실전투자 계좌들 찾기
+        real_accounts = {
+            account_id: config for account_id, config in account_configs.items() 
+            if not config.is_virtual
+        }
+        
+        # 모의투자용 기본 실전투자 계좌 결정
+        default_real_account_id = self.config.get('pykis.default_real_account_id')
+        default_real_secret = None
+        
+        if real_accounts:
+            if default_real_account_id and default_real_account_id in real_accounts:
+                # 지정된 실전투자 계좌 사용
+                default_real_secret = real_accounts[default_real_account_id].secret_file
+                logger.info(f"Using {default_real_account_id} as default real account for virtual trading")
+            else:
+                # 첫 번째 실전투자 계좌 사용
+                first_real_account = next(iter(real_accounts.values()))
+                default_real_secret = first_real_account.secret_file
+                logger.info(f"Using {first_real_account.account_id} as default real account for virtual trading")
+        else:
+            logger.warning("No real accounts found - virtual accounts may not work properly")
+        
+        # 계좌 생성
         for account_id, config in account_configs.items():
             try:
                 account = Account(
@@ -130,10 +154,11 @@ class AutoTrader:
                     account_type=AccountType(config.type),
                     secret_file_path=config.secret_file,
                     is_virtual=config.is_virtual,
-                    is_active=config.is_active
+                    is_active=config.is_active,
+                    default_real_secret=default_real_secret if config.is_virtual else None
                 )
                 accounts[account_id] = account
-                logger.info(f"Account loaded: {account_id}")
+                logger.info(f"Account loaded: {account_id} (virtual: {config.is_virtual})")
                 
             except Exception as e:
                 logger.error(f"Failed to load account {account_id}: {e}")

@@ -3,14 +3,20 @@ Dashboard - Streamlit 기반 메인 대시보드
 계좌 현황, 포지션, 거래 내역, 수동 주문, 비상 정지 기능 제공
 """
 
-import streamlit as st
-import time
-from typing import Optional
-from ..core import AutoTrader
-from .components.account_summary import render_account_summary, render_balance_details
-from .components.position_view import render_positions_overview, render_position_details
-from .components.trade_history import render_trade_history
+import sys
+import os
+from pathlib import Path
 
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.core import AutoTrader
+from src.models import TradeSignal, Position
+from src.trading import Account, AccountType
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime
 
 class Dashboard:
     """Streamlit 대시보드 메인 클래스"""

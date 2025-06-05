@@ -3,7 +3,7 @@ Account - 계좌별 관리 클래스
 브로커 API를 통한 계좌 특화 기능 제공
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from enum import Enum
 import logging
 from .broker import Broker
@@ -27,7 +27,8 @@ class Account:
         account_type: AccountType,
         secret_file_path: str,
         is_virtual: bool = False,
-        is_active: bool = True
+        is_active: bool = True,
+        default_real_secret: Optional[str] = None
     ):
         self.account_id = account_id
         self.name = name
@@ -35,14 +36,19 @@ class Account:
         self.is_virtual = is_virtual
         self.is_active = is_active
         
-        # Broker 인스턴스 생성
-        self.broker = Broker(account_id, secret_file_path, is_virtual)
+        # Broker 인스턴스 생성 (모의투자인 경우 default_real_secret 전달)
+        self.broker = Broker(
+            account_id=account_id, 
+            secret_file_path=secret_file_path, 
+            is_virtual=is_virtual,
+            default_real_secret=default_real_secret if is_virtual else None
+        )
         
         # 캐시된 잔고 정보
         self._cached_balance = None
         self._cached_positions = None
         
-        logger.info(f"Account initialized: {account_id} ({name})")
+        logger.info(f"Account initialized: {account_id} ({name}) - Virtual: {is_virtual}")
     
     def get_balance(self) -> Dict:
         """계좌 잔고 조회"""

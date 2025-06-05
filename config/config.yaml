@@ -15,13 +15,6 @@ webhook:
 
 # 계좌 설정
 accounts:
-  stock_real_01:
-    name: "주식 실전 계좌 01"
-    type: "STOCK"
-    secret_file: "secrets/stock_real_01.json"
-    is_virtual: false
-    is_active: true
-  
   futures_real_01:
     name: "선물 실전 계좌 01"
     type: "FUTURES"
@@ -45,15 +38,8 @@ accounts:
 
 # 전략별 설정
 strategies:
-  KOSPI_TREND:
-    account_id: "stock_real_01"
-    webhook_token: "webhook_token_1"
-    max_position_ratio: 1
-    max_daily_loss: 5000000
-    is_active: false
-  
   FUTURES_MOMENTUM:
-    account_id: "futures_real_01"
+    account_id: "futures_virtual_01"
     webhook_token: "webhook_token_2"
     max_position_ratio: 1
     max_daily_loss: 3000000
@@ -108,3 +94,4 @@ pykis:
   token_path: "config/tokens/"
   retry_count: 3
   timeout_seconds: 10
+  default_real_account_id: "futures_real_01"

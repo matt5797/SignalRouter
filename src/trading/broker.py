@@ -6,6 +6,7 @@ Broker - PyKis API 래퍼 클래스
 from typing import Dict, List, Optional
 from decimal import Decimal
 import logging
+from pathlib import Path
 from pykis import PyKis, KisAuth, KisStock, KisAccount, KisOrder
 
 logger = logging.getLogger(__name__)
@@ -14,22 +15,25 @@ logger = logging.getLogger(__name__)
 class Broker:
     """PyKis API 래퍼 클래스"""
     
-    def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False):
+    def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
+                 default_real_secret: Optional[str] = None):
         self.account_id = account_id
         self.secret_file_path = secret_file_path
         self.is_virtual = is_virtual
+        self.default_real_secret = default_real_secret
         self._kis = self._init_pykis()
-        logger.info(f"Broker initialized for account {account_id}")
+        logger.info(f"Broker initialized for account {account_id} (virtual: {is_virtual})")
     
     def _init_pykis(self) -> PyKis:
         """PyKis 객체 초기화"""
         try:
             if self.is_virtual:
                 # 모의투자용 초기화
-                return PyKis(self.secret_file_path, keep_token=True)
+                return PyKis(self.default_real_secret, self.secret_file_path, keep_token=True)
             else:
                 # 실전투자용 초기화
                 return PyKis(self.secret_file_path, keep_token=True)
+                
         except Exception as e:
             logger.error(f"Failed to initialize PyKis: {e}")
             raise
@@ -56,13 +60,12 @@ class Broker:
         try:
             stock = self._create_stock_object(symbol)
             if price is None:
-                # 시장가 매도 (전량 또는 지정 수량)
+                # 시장가 매도
                 if quantity == 0:
                     order = stock.sell()  # 전량 매도
                 else:
-                    # PyKis는 지정 수량 시장가 매도를 위해 가격을 설정해야 할 수 있음
-                    current_price = stock.quote().price
-                    order = stock.sell(price=current_price * 0.9, qty=quantity)  # 현재가 대비 10% 하락가로 시장가 효과
+                    # 지정 수량 시장가 매도
+                    order = stock.sell(qty=quantity)
             else:
                 # 지정가 매도
                 order = stock.sell(price=price, qty=quantity)
@@ -104,7 +107,7 @@ class Broker:
             if krw_deposit:
                 return {
                     'total_balance': float(krw_deposit.amount),
-                    'available_balance': float(krw_deposit.amount),  # PyKis에서 매수가능금액 별도 조회 필요
+                    'available_balance': float(krw_deposit.amount),
                     'currency': 'KRW'
                 }
             return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
@@ -115,7 +118,6 @@ class Broker:
     def get_order_status(self, order_id: str) -> Dict:
         """주문 상태 조회"""
         try:
-            # PyKis의 미체결 주문 조회를 통해 상태 확인
             account = self._kis.account()
             pending_orders = account.pending_orders()
             
@@ -137,8 +139,6 @@ class Broker:
     def cancel_order(self, order_id: str) -> bool:
         """주문 취소"""
         try:
-            # PyKis의 주문 취소 기능 (order 객체가 필요)
-            # 간단한 구현을 위해 모든 미체결 주문을 조회하여 해당 주문 찾아서 취소
             account = self._kis.account()
             pending_orders = account.pending_orders()
             
@@ -160,10 +160,13 @@ class Broker:
     
     def _extract_order_id(self, order: KisOrder) -> str:
         """주문 객체에서 주문 ID 추출"""
-        # PyKis Order 객체의 구조에 따라 조정 필요
-        if hasattr(order, 'order_number'):
-            return f"{order.order_number.branch}-{order.order_number.number}"
-        return str(id(order))  # 임시 방편
+        try:
+            if hasattr(order, 'order_number'):
+                if hasattr(order.order_number, 'branch') and hasattr(order.order_number, 'number'):
+                    return f"{order.order_number.branch}-{order.order_number.number}"
+            return str(id(order))  # fallback
+        except Exception:
+            return str(id(order))
     
     def get_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """매수 가능 금액/수량 조회"""

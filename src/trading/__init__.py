@@ -2,6 +2,7 @@
 Trading 모듈 - 거래 실행 및 계좌 관리
 """
 
+# 기존 컴포넌트
 from .broker import Broker
 from .account import Account, AccountType
 from .trade_executor import TradeExecutor
@@ -12,8 +13,13 @@ from .exceptions import (
     DailyLossLimitExceededError, InvalidOrderError, OrderTimeoutError
 )
 
+# Phase 1 추가: KIS API 인증 관련
+from .kis_auth import KisAuth
+from .secret_loader import SecretLoader
+from .auth_factory import AuthFactory
+
 __all__ = [
-    # 핵심 클래스
+    # 기존 핵심 클래스
     'Broker',
     'Account', 
     'AccountType',
@@ -30,5 +36,10 @@ __all__ = [
     'PositionLimitExceededError',
     'DailyLossLimitExceededError', 
     'InvalidOrderError',
-    'OrderTimeoutError'
+    'OrderTimeoutError',
+    
+    # Phase 1 추가: KIS 인증
+    'KisAuth',
+    'SecretLoader', 
+    'AuthFactory'
 ]

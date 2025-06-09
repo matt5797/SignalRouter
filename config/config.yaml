@@ -13,6 +13,16 @@ webhook:
   secret_key: "your-secret-key-here"
   allowed_ips: []  # 빈 리스트면 모든 IP 허용
 
+# KIS API 설정 (새로 추가)
+kis_api:
+  prod_url: "https://openapi.koreainvestment.com:9443"
+  vps_url: "https://openapivts.koreainvestment.com:29443"
+  token_storage_path: "config/tokens/"
+  auto_reauth: true
+  timeout_seconds: 30
+  retry_count: 3
+  retry_delay_seconds: 5
+
 # 계좌 설정
 accounts:
   futures_real_01:
@@ -88,7 +98,7 @@ notifications:
   telegram_bot_token: ""
   telegram_chat_id: ""
 
-# PyKis 관련 설정
+# PyKis 관련 설정 (제거 예정)
 pykis:
   keep_token: true
   token_path: "config/tokens/"

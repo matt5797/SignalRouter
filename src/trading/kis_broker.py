@@ -445,26 +445,143 @@ class KisBroker:
                 return "TTTS1001U"
         return "TTTT1006U"  # 기본값
     
-    # ========== 주식 API 구현 (기본) ==========
+    # ========== 주식 API 구현 ==========
     
     def _stock_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """주식 매수 주문 (기본 구현)"""
-        # 임시 구현 - 실제로는 국내주식 API 사용
-        logger.info(f"Stock buy order: {symbol} x{quantity} @ {price}")
-        return f"stock_buy_{int(time.time())}"
+        """주식 매수 주문"""
+        tr_id = "VTTC0802U" if self.is_virtual else "TTTC0802U"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(int(price)) if price else "0"
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
+        output = result.get('output', {})
+        
+        # 주문번호 조합: 조직번호 + 주문번호
+        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
+        order_no = output.get('ODNO', '')
+        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_buy_{int(time.time())}"
     
     def _stock_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """주식 매도 주문 (기본 구현)"""
-        logger.info(f"Stock sell order: {symbol} x{quantity} @ {price}")
-        return f"stock_sell_{int(time.time())}"
+        """주식 매도 주문"""
+        tr_id = "VTTC0801U" if self.is_virtual else "TTTC0801U"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_DVSN": "00" if price else "01",
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(int(price)) if price else "0"
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
+        output = result.get('output', {})
+        
+        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
+        order_no = output.get('ODNO', '')
+        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_sell_{int(time.time())}"
     
     def _stock_balance(self) -> Dict:
-        """주식 잔고 조회 (기본 구현)"""
-        return {'total_balance': 10000000.0, 'available_balance': 10000000.0, 'currency': 'KRW'}
+        """주식 잔고 조회"""
+        tr_id = "TTTC8434R"  # 모의투자도 동일 TR ID 사용
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "AFHR_FLPR_YN": "N",  # 시간외단일가여부
+            "OFL_YN": "",  # 오프라인여부
+            "INQR_DVSN": "00",  # 조회구분
+            "UNPR_DVSN": "01",  # 단가구분
+            "FUND_STTL_ICLD_YN": "N",  # 펀드결제분포함여부
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",  # 전일매매포함
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance", 
+                                   tr_id, params, method="GET")
+        
+        output = result.get('output2', [])
+        if output:
+            balance_data = output[0] if isinstance(output, list) else output
+            return {
+                'total_balance': float(balance_data.get('tot_evlu_amt', 0)),
+                'available_balance': float(balance_data.get('prvs_rcdl_excc_amt', 0)),
+                'currency': 'KRW'
+            }
+        
+        return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
     
     def _stock_positions(self) -> List[Dict]:
-        """주식 포지션 조회 (기본 구현)"""
-        return []
+        """주식 포지션 조회"""
+        tr_id = "TTTC8434R"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "00",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N", 
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance",
+                                   tr_id, params, method="GET")
+        
+        positions = []
+        output1 = result.get('output1', [])
+        
+        for item in output1:
+            # 보유수량이 있는 종목만 포함
+            quantity = int(item.get('hldg_qty', 0))
+            if quantity > 0:
+                positions.append({
+                    'symbol': item.get('pdno', ''),
+                    'quantity': quantity,
+                    'avg_price': float(item.get('pchs_avg_pric', 0)),
+                    'current_value': float(item.get('evlu_amt', 0)),
+                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0))
+                })
+        
+        return positions
+    
+    def _stock_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
+        """주식 매수가능 조회"""
+        tr_id = "TTTC8908R"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_UNPR": str(int(price)) if price else "",
+            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
+            "CMA_EVLU_AMT_ICLD_YN": "N",  # CMA평가금액포함여부
+            "OVRS_ICLD_YN": "Y"  # 해외포함여부
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+                                   tr_id, params, method="GET")
+        
+        output = result.get('output', {})
+        return {
+            'symbol': symbol,
+            'orderable_quantity': int(output.get('max_buy_qty', 0)),
+            'orderable_amount': float(output.get('ord_psbl_cash', 0)),
+            'unit_price': float(price or output.get('psbl_qty_calc_unpr', 0))
+        }
     
     # ========== 응답 표준화 메서드 ==========
     

@@ -4,7 +4,7 @@ TradeExecutor - 주문 실행 및 리스크 관리 클래스
 """
 
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from datetime import datetime, date
 import logging
 from ..database import TradingDB
@@ -71,20 +71,22 @@ class TradeExecutor:
             logger.error(f"Failed to place order: {e}")
             raise
     
-    def wait_for_fill(self, account: Account, order_id: str, timeout_seconds: int = 60) -> bool:
-        """주문 체결 대기"""
+    def wait_for_fill(self, account: Account, order_id: str, timeout_seconds: int = 60) -> Tuple[bool, Dict]:
+        """주문 체결 대기 - 체결 정보도 함께 반환"""
         start_time = time.time()
+        last_status = {}
         
         while time.time() - start_time < timeout_seconds:
             try:
                 status = account.broker.get_order_status(order_id)
+                last_status = status
                 
                 if status['status'] == 'FILLED':
                     logger.info(f"Order filled: {order_id}")
-                    return True
-                elif status['status'] == 'FAILED':
-                    logger.error(f"Order failed: {order_id}")
-                    return False
+                    return True, status
+                elif status['status'] in ['FAILED', 'REJECTED', 'CANCELLED']:
+                    logger.error(f"Order failed: {order_id} - {status['status']}")
+                    return False, status
                 
                 time.sleep(2)  # 2초 간격으로 체크
                 
@@ -93,7 +95,7 @@ class TradeExecutor:
                 time.sleep(5)
         
         logger.warning(f"Order wait timeout: {order_id}")
-        return False
+        return False, last_status
     
     def check_position_limit(self, account: Account, symbol: str, amount: float) -> bool:
         """포지션 한도 체크"""
@@ -166,13 +168,13 @@ class TradeExecutor:
             order_id = self.place_order(account, trade_order.to_broker_format())
             
             # 체결 대기
-            filled = self.wait_for_fill(account, order_id)
+            filled, fill_info = self.wait_for_fill(account, order_id)
             
             # 상태 업데이트
             fill_data = {
                 'broker_order_id': order_id,
-                'filled_quantity': trade_order.quantity if filled else 0,
-                'avg_fill_price': trade_order.price,
+                'filled_quantity': fill_info.get('filled_quantity', trade_order.quantity if filled else 0),
+                'avg_fill_price': fill_info.get('avg_fill_price', trade_order.price),
                 'fill_time': datetime.now()
             }
             status = TradeStatus.FILLED.value if filled else TradeStatus.FAILED.value
@@ -186,43 +188,124 @@ class TradeExecutor:
             return False
     
     def _execute_reverse_position(self, account: Account, trade_order: TradeOrder, trade_id: int) -> bool:
-        """포지션 방향 전환 실행"""
+        """포지션 방향 전환 실행 - 완성된 버전"""
+        logger.info(f"Starting position reversal for {trade_order.symbol}")
+        
         try:
-            # 1. 기존 포지션 청산
+            # 1단계: 기존 포지션 확인 및 청산
             current_position = account.get_position_for_symbol(trade_order.symbol)
+            exit_success = False
+            exit_order_id = None
+            
             if current_position['quantity'] != 0:
+                logger.info(f"Existing position found: {current_position['quantity']} shares")
+                
+                # 청산 주문 생성
                 exit_action = 'SELL' if current_position['quantity'] > 0 else 'BUY'
                 exit_order = {
                     'symbol': trade_order.symbol,
                     'action': exit_action,
                     'quantity': abs(current_position['quantity']),
-                    'price': None  # 시장가로 청산
+                    'price': None  # 시장가로 확실한 청산
                 }
                 
-                exit_order_id = self.place_order(account, exit_order)
-                if not self.wait_for_fill(account, exit_order_id):
-                    logger.error("Failed to exit existing position")
+                # 청산 주문 실행
+                try:
+                    exit_order_id = self.place_order(account, exit_order)
+                    logger.info(f"Exit order placed: {exit_order_id}")
+                    
+                    # 청산 체결 대기
+                    exit_filled, exit_fill_info = self.wait_for_fill(account, exit_order_id, timeout_seconds=120)
+                    
+                    if exit_filled:
+                        exit_success = True
+                        logger.info(f"Position successfully closed: {exit_order_id}")
+                    else:
+                        # 부분 체결 상황 처리
+                        filled_qty = exit_fill_info.get('filled_quantity', 0)
+                        if filled_qty > 0:
+                            logger.warning(f"Partial exit fill: {filled_qty}/{exit_order['quantity']}")
+                            # 부분 체결이라도 진행 (남은 포지션은 추후 처리)
+                            exit_success = True
+                        else:
+                            logger.error(f"Exit order completely failed: {exit_order_id}")
+                            # 청산 실패 시 포지션 전환 중단
+                            self._update_failed_reverse_position(trade_id, "Exit order failed")
+                            return False
+                            
+                except Exception as e:
+                    logger.error(f"Failed to place exit order: {e}")
+                    self._update_failed_reverse_position(trade_id, f"Exit order placement failed: {e}")
+                    return False
+            else:
+                logger.info("No existing position to close")
+                exit_success = True
+            
+            # 2단계: 새 포지션 진입 (청산 성공한 경우만)
+            if exit_success:
+                # 잠시 대기 (시장 안정화)
+                time.sleep(1)
+                
+                try:
+                    entry_order_id = self.place_order(account, trade_order.to_broker_format())
+                    logger.info(f"Entry order placed: {entry_order_id}")
+                    
+                    # 진입 체결 대기
+                    entry_filled, entry_fill_info = self.wait_for_fill(account, entry_order_id)
+                    
+                    # 최종 결과 업데이트
+                    if entry_filled:
+                        logger.info(f"Position reversal completed successfully")
+                        fill_data = {
+                            'broker_order_id': entry_order_id,
+                            'filled_quantity': entry_fill_info.get('filled_quantity', trade_order.quantity),
+                            'avg_fill_price': entry_fill_info.get('avg_fill_price', trade_order.price),
+                            'fill_time': datetime.now(),
+                            'exit_order_id': exit_order_id  # 청산 주문 ID도 기록
+                        }
+                        self.db.update_trade_status(trade_id, TradeStatus.FILLED.value, fill_data)
+                        return True
+                    else:
+                        # 진입 실패 - 청산은 되었지만 새 포지션 진입 실패
+                        logger.error(f"Entry order failed after successful exit")
+                        fill_data = {
+                            'broker_order_id': entry_order_id,
+                            'filled_quantity': 0,
+                            'avg_fill_price': 0,
+                            'fill_time': datetime.now(),
+                            'exit_order_id': exit_order_id,
+                            'error': 'Entry failed after exit'
+                        }
+                        self.db.update_trade_status(trade_id, TradeStatus.FAILED.value, fill_data)
+                        return False
+                        
+                except Exception as e:
+                    logger.error(f"Failed to place entry order: {e}")
+                    # 청산은 성공했지만 진입 실패
+                    self._update_failed_reverse_position(
+                        trade_id, f"Entry order failed: {e}", exit_order_id
+                    )
                     return False
             
-            # 2. 새 포지션 진입
-            entry_order_id = self.place_order(account, trade_order.to_broker_format())
-            filled = self.wait_for_fill(account, entry_order_id)
-            
-            # 상태 업데이트
-            fill_data = {
-                'broker_order_id': entry_order_id,
-                'filled_quantity': trade_order.quantity if filled else 0,
-                'avg_fill_price': trade_order.price,
-                'fill_time': datetime.now()
-            }
-            status = TradeStatus.FILLED.value if filled else TradeStatus.FAILED.value
-            self.db.update_trade_status(trade_id, status, fill_data)
-            
-            return filled
-            
         except Exception as e:
-            logger.error(f"Failed to execute reverse position: {e}")
+            logger.error(f"Unexpected error in position reversal: {e}")
+            self._update_failed_reverse_position(trade_id, f"Unexpected error: {e}")
             return False
+    
+    def _update_failed_reverse_position(self, trade_id: int, error_msg: str, exit_order_id: str = None) -> None:
+        """포지션 전환 실패 시 상태 업데이트"""
+        fill_data = {
+            'broker_order_id': 'failed',
+            'filled_quantity': 0,
+            'avg_fill_price': 0,
+            'fill_time': datetime.now(),
+            'error': error_msg
+        }
+        
+        if exit_order_id:
+            fill_data['exit_order_id'] = exit_order_id
+            
+        self.db.update_trade_status(trade_id, TradeStatus.FAILED.value, fill_data)
     
     def _calculate_transition_type(self, current_position: Dict, signal_data: Dict) -> TransitionType:
         """포지션 전환 타입 계산"""
@@ -268,3 +351,34 @@ class TradeExecutor:
             return False
         
         return True
+    
+    def force_close_position(self, account: Account, symbol: str) -> bool:
+        """강제 포지션 청산 (비상 시 사용)"""
+        try:
+            current_position = account.get_position_for_symbol(symbol)
+            if current_position['quantity'] == 0:
+                logger.info(f"No position to close for {symbol}")
+                return True
+            
+            # 시장가로 강제 청산
+            action = 'SELL' if current_position['quantity'] > 0 else 'BUY'
+            order_data = {
+                'symbol': symbol,
+                'action': action,
+                'quantity': abs(current_position['quantity']),
+                'price': None  # 시장가
+            }
+            
+            order_id = self.place_order(account, order_data)
+            filled, _ = self.wait_for_fill(account, order_id, timeout_seconds=30)
+            
+            if filled:
+                logger.info(f"Position force closed: {symbol}")
+            else:
+                logger.error(f"Failed to force close position: {symbol}")
+            
+            return filled
+            
+        except Exception as e:
+            logger.error(f"Error in force close position: {e}")
+            return False

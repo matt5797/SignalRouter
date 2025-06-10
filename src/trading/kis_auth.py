@@ -21,7 +21,7 @@ class KisAuth:
     
     def __init__(self, app_key: str, app_secret: str, account_number: str,
                  account_product: str, is_virtual: bool = False,
-                 token_storage_path: str = "config/tokens/"):
+                 token_storage_path: str = "secrets/tokens/"):
         self.app_key = app_key
         self.app_secret = app_secret
         self.account_number = account_number
@@ -123,6 +123,8 @@ class KisAuth:
         with open(token_file, 'w', encoding='utf-8') as f:
             yaml.dump(token_data, f, default_flow_style=False)
         
+        self._cleanup_old_tokens(keep_days=7)
+        
         logger.debug(f"Token saved to {token_file}")
     
     def _load_saved_token(self) -> Optional[str]:
@@ -162,3 +164,25 @@ class KisAuth:
             return exp_dt > now_dt
         except Exception:
             return False
+    
+    def _cleanup_old_tokens(self, keep_days: int = 7) -> None:
+        """오래된 토큰 파일 정리"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=keep_days)
+            pattern = f"kis_{self.account_number}_*.yaml"
+            
+            for token_file in self.token_storage_path.glob(pattern):
+                try:
+                    # 파일명에서 날짜 추출
+                    date_str = token_file.stem.split('_')[-1]  # YYYYMMDD
+                    file_date = datetime.strptime(date_str, '%Y%m%d')
+                    
+                    if file_date < cutoff_date:
+                        token_file.unlink()
+                        logger.debug(f"Deleted old token file: {token_file}")
+                except (ValueError, IndexError):
+                    # 파일명 형식이 다르면 무시
+                    continue
+                    
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old tokens: {e}")

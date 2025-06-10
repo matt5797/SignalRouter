@@ -16,7 +16,7 @@ class AuthFactory:
     
     @staticmethod
     def create_from_secret(secret_file_path: str, 
-                          token_storage_path: str = "config/tokens/") -> KisAuth:
+                          token_storage_path: str = "secrets/tokens/") -> KisAuth:
         """Secret 파일에서 KisAuth 인스턴스 생성"""
         try:
             # Secret 데이터 로드
@@ -46,7 +46,7 @@ class AuthFactory:
     @staticmethod
     def create_virtual_with_real_reference(virtual_secret_path: str,
                                          default_real_secret_path: Optional[str] = None,
-                                         token_storage_path: str = "config/tokens/") -> KisAuth:
+                                         token_storage_path: str = "secrets/tokens/") -> KisAuth:
         """모의투자 계좌용 KisAuth 생성 (실전계좌 참조)"""
         try:
             # 모의투자 계좌 정보 로드

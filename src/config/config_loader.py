@@ -137,10 +137,6 @@ class ConfigLoader:
         """대시보드 설정 반환"""
         return self._config.get('dashboard', {})
     
-    def get_pykis_config(self) -> Dict[str, Any]:
-        """PyKis 설정 반환"""
-        return self._config.get('pykis', {})
-    
     def get_strategy_by_token(self, webhook_token: str) -> Optional[StrategyConfig]:
         """웹훅 토큰으로 전략 검색"""
         for strategy_name, strategy_data in self._config.get('strategies', {}).items():

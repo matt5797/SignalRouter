@@ -1,6 +1,5 @@
 """
 KisBroker - 한국투자증권 API 직접 호출 브로커 클래스
-기존 Broker 인터페이스 호환성 유지하면서 PyKis 의존성 제거
 """
 
 import json
@@ -113,20 +112,6 @@ class KisBroker:
         except Exception as e:
             logger.error(f"Get balance failed: {e}")
             return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
-    
-    def get_order_status(self, order_id: str) -> Dict:
-        """주문 상태 조회"""
-        try:
-            # 주문 ID에서 정보 추출 (임시 구현)
-            return {
-                'order_id': order_id,
-                'status': 'FILLED',  # 임시로 FILLED 반환
-                'filled_quantity': 0,
-                'remaining_quantity': 0
-            }
-        except Exception as e:
-            logger.error(f"Get order status failed: {e}")
-            return {'order_id': order_id, 'status': 'UNKNOWN', 'filled_quantity': 0}
     
     def cancel_order(self, order_id: str) -> bool:
         """주문 취소"""

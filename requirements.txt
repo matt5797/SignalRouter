@@ -1,7 +1,6 @@
 # SignalRouter 자동매매 시스템 의존성
 
 # Core dependencies
-python-kis>=2.0.0          # 한국투자증권 API
 fastapi>=0.100.0           # 웹훅 서버
 uvicorn>=0.23.0            # ASGI 서버  
 streamlit>=1.25.0          # 대시보드

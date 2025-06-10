@@ -5,7 +5,7 @@ SignalRouter 자동매매 시스템
 """
 
 # 버전 정보
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 __author__ = "Cho Sangjun"
 
 # 공통 모델들을 최상위에서 임포트 가능하게 함
@@ -13,7 +13,7 @@ from .models import TradeSignal, Position, TradeOrder, TransitionType, TradeStat
 from .database import TradingDB
 from .config import ConfigLoader, AccountConfig, StrategyConfig
 from .trading import (
-    Broker, Account, AccountType, TradeExecutor, PositionManager,
+    KisBroker, Account, AccountType, TradeExecutor, PositionManager,
     TradingError, BrokerError, AccountError, OrderError, RiskManagementError
 )
 
@@ -35,7 +35,7 @@ __all__ = [
     'StrategyConfig',
     
     # 거래 시스템
-    'Broker',
+    'KisBroker',
     'Account',
     'AccountType', 
     'TradeExecutor',

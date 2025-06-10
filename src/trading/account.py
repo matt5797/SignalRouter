@@ -6,7 +6,7 @@ Account - 계좌별 관리 클래스
 from typing import Dict, List, Optional
 from enum import Enum
 import logging
-from .broker import Broker
+from .kis_broker import KisBroker
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ class Account:
         secret_file_path: str,
         is_virtual: bool = False,
         is_active: bool = True,
-        default_real_secret: Optional[str] = None
     ):
         self.account_id = account_id
         self.name = name
@@ -37,11 +36,10 @@ class Account:
         self.is_active = is_active
         
         # Broker 인스턴스 생성 (모의투자인 경우 default_real_secret 전달)
-        self.broker = Broker(
+        self.broker = KisBroker(
             account_id=account_id, 
             secret_file_path=secret_file_path, 
-            is_virtual=is_virtual,
-            default_real_secret=default_real_secret if is_virtual else None
+            is_virtual=is_virtual
         )
         
         # 캐시된 잔고 정보
@@ -126,7 +124,7 @@ class Account:
         except Exception as e:
             logger.error(f"Failed to get orderable amount: {e}")
             return {'symbol': symbol, 'orderable_quantity': 0, 'orderable_amount': 0.0, 'unit_price': 0.0}
-    
+
     def get_total_portfolio_value(self) -> float:
         """총 포트폴리오 가치"""
         try:

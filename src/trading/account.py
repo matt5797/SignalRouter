@@ -28,6 +28,7 @@ class Account:
         secret_file_path: str,
         is_virtual: bool = False,
         is_active: bool = True,
+        token_storage_path: str = "secrets/tokens/"
     ):
         self.account_id = account_id
         self.name = name
@@ -39,7 +40,8 @@ class Account:
         self.broker = KisBroker(
             account_id=account_id, 
             secret_file_path=secret_file_path, 
-            is_virtual=is_virtual
+            is_virtual=is_virtual,
+            token_storage_path=token_storage_path
         )
         
         # 캐시된 잔고 정보

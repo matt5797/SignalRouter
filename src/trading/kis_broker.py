@@ -25,19 +25,21 @@ class KisBroker:
     """KIS API 직접 호출 브로커 클래스"""
     
     def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
-                 default_real_secret: Optional[str] = None):
+                 default_real_secret: Optional[str] = None, 
+                 token_storage_path: str = "secrets/tokens/"):
         self.account_id = account_id
         self.secret_file_path = secret_file_path
         self.is_virtual = is_virtual
         self.default_real_secret = default_real_secret
+        self.token_storage_path = token_storage_path
         
         # 인증 객체 생성
         if is_virtual and default_real_secret:
             self.auth = AuthFactory.create_virtual_with_real_reference(
-                secret_file_path, default_real_secret
+                secret_file_path, default_real_secret, token_storage_path
             )
         else:
-            self.auth = AuthFactory.create_from_secret(secret_file_path)
+            self.auth = AuthFactory.create_from_secret(secret_file_path, token_storage_path)
         
         # 계좌 타입 및 기본 정보 로드
         self.secret_data = SecretLoader.load_secret(secret_file_path)

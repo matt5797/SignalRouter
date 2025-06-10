@@ -122,6 +122,9 @@ class AutoTrader:
         accounts = {}
         account_configs = self.config.get_all_accounts()
         
+        kis_config = self.config.get('kis_api', {})
+        token_storage_path = kis_config.get('token_storage_path', 'secrets/tokens/')
+        
         # KisBroker는 각 계좌별로 독립적인 인증 정보 사용
         for account_id, config in account_configs.items():
             try:
@@ -131,7 +134,8 @@ class AutoTrader:
                     account_type=AccountType(config.type),
                     secret_file_path=config.secret_file,
                     is_virtual=config.is_virtual,
-                    is_active=config.is_active
+                    is_active=config.is_active,
+                    token_storage_path=token_storage_path
                 )
                 accounts[account_id] = account
                 logger.info(f"Account loaded: {account_id} (type: {config.type}, virtual: {config.is_virtual})")

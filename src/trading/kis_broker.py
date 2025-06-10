@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from decimal import Decimal
 import logging
 from pathlib import Path
+from datetime import datetime, time as dt_time
 from .kis_auth import KisAuth
 from .auth_factory import AuthFactory
 from .secret_loader import SecretLoader
@@ -23,6 +24,39 @@ logger = logging.getLogger(__name__)
 
 class KisBroker:
     """KIS API 직접 호출 브로커 클래스"""
+    
+    # TR ID 매핑 테이블 (계좌타입, 세션, 실전/모의, 액션)
+    TR_MAPPING = {
+        # 선물 매수/매도
+        ('FUTURES', 'DAY', False, 'ORDER'): 'TTTO1101U',    # 실전 주간 주문
+        ('FUTURES', 'NIGHT', False, 'ORDER'): 'TTTN1101U',  # 실전 야간 주문
+        ('FUTURES', 'DAY', True, 'ORDER'): 'VTTO1101U',     # 모의 주간 주문
+        ('FUTURES', 'NIGHT', True, 'ORDER'): 'VTTN1101U',   # 모의 야간 주문 # 미지원
+        
+        # 선물 정정/취소
+        ('FUTURES', 'DAY', False, 'CANCEL'): 'TTTO1103U',   # 실전 주간 정정취소
+        ('FUTURES', 'NIGHT', False, 'CANCEL'): 'TTTN1103U', # 실전 야간 정정취소
+        ('FUTURES', 'DAY', True, 'CANCEL'): 'VTTO1103U',    # 모의 주간 정정취소
+        ('FUTURES', 'NIGHT', True, 'CANCEL'): 'VTTN1103U',  # 모의 야간 정정취소 # 미지원
+        
+        # 선물 잔고조회
+        ('FUTURES', 'DAY', False, 'BALANCE'): 'CTFO6118R',   # 실전 잔고조회
+        ('FUTURES', 'DAY', True, 'BALANCE'): 'VTFO6118R',    # 모의 잔고조회
+        ('FUTURES', 'NIGHT', False, 'BALANCE'): 'CTFN6118R', # 실전 잔고조회
+        ('FUTURES', 'NIGHT', True, 'BALANCE'): 'VTFN6118R',  # 모의 잔고조회 # 미지원
+        
+        # 선물 주문체결조회
+        ('FUTURES', 'DAY', False, 'INQUIRY'): 'TTTO5201R',   # 실전 주문체결조회
+        ('FUTURES', 'DAY', True, 'INQUIRY'): 'VTTO5201R',    # 모의 주문체결조회
+        ('FUTURES', 'NIGHT', False, 'INQUIRY'): 'STTN5201R', # 실전 주문체결조회
+        ('FUTURES', 'NIGHT', True, 'INQUIRY'): 'VTTN5201R',  # 모의 주문체결조회 # 미지원
+        
+        # 선물 주문가능조회
+        ('FUTURES', 'DAY', False, 'ORDERABLE'): 'TTTO5105R',   # 실전 주문가능조회
+        ('FUTURES', 'DAY', True, 'ORDERABLE'): 'VTTO5105R',    # 모의 주문가능조회
+        ('FUTURES', 'NIGHT', False, 'ORDERABLE'): 'STTN5105R', # 실전 주문가능조회
+        ('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTN5105R',  # 모의 주문가능조회 # 미지원
+    }
     
     def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
                  default_real_secret: Optional[str] = None, 
@@ -46,6 +80,77 @@ class KisBroker:
         self.account_type = self._get_account_type()
         
         logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
+    
+    @staticmethod
+    def get_market_session(target_time: datetime = None) -> str:
+        """
+        거래 시간대 판단 (KISS 원칙 적용)
+        
+        Args:
+            target_time: 판단할 시간 (None이면 현재 시간)
+            
+        Returns:
+            'DAY': 주간거래 (09:00~15:45)
+            'NIGHT': 야간거래 (18:00~06:00)  
+            'CLOSED': 휴장
+        """
+        if target_time is None:
+            target_time = datetime.now()
+        
+        # 주말 체크
+        if target_time.weekday() >= 5:  # 토요일(5), 일요일(6)
+            return 'CLOSED'
+        
+        current_time = target_time.time()
+        
+        # 주간거래: 09:00~15:45
+        if dt_time(9, 0) <= current_time <= dt_time(15, 45):
+            return 'DAY'
+        
+        # 야간거래: 18:00~23:59 또는 00:00~06:00
+        if current_time >= dt_time(18, 0) or current_time <= dt_time(6, 0):
+            return 'NIGHT'
+        
+        # 나머지 시간은 휴장
+        return 'CLOSED'
+    
+    def _get_tr_id(self, action: str, force_session: str = None) -> str:
+        """
+        계좌 타입, 세션, 모의/실전에 따른 TR ID 반환
+        
+        Args:
+            action: 'ORDER', 'CANCEL', 'BALANCE', 'INQUIRY', 'ORDERABLE'
+            force_session: 강제 세션 지정 ('DAY' 또는 'NIGHT')
+            
+        Returns:
+            TR ID 문자열
+        """
+        # 세션 결정
+        if force_session:
+            session = force_session
+        else:
+            session = self.get_market_session()
+            
+        # 휴장시간 체크
+        if session == 'CLOSED' and not force_session:
+            logger.warning("Market is closed. Using NIGHT session as fallback.")
+            session = 'NIGHT'  # 휴장시간에는 야간 TR을 기본값으로 사용
+        
+        # TR ID 조회
+        key = (self.account_type, session, self.is_virtual, action)
+        tr_id = self.TR_MAPPING.get(key)
+        
+        if not tr_id:
+            # fallback: 야간 TR 사용
+            fallback_key = (self.account_type, 'NIGHT', self.is_virtual, action)
+            tr_id = self.TR_MAPPING.get(fallback_key)
+            logger.warning(f"TR ID not found for {key}, using fallback: {tr_id}")
+        
+        if not tr_id:
+            raise KisApiError(f"No TR ID found for {key}")
+        
+        logger.debug(f"Selected TR ID: {tr_id} for {key}")
+        return tr_id
     
     def buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """매수 주문 실행"""
@@ -192,6 +297,10 @@ class KisBroker:
             url = f"{self.auth.base_url}{url_path}"
             headers = self.auth.get_request_headers(tr_id, tr_cont)
             
+            # 현재 세션 정보 로깅
+            current_session = self.get_market_session()
+            logger.debug(f"API call: {tr_id}, Session: {current_session}, URL: {url_path}")
+            
             if method.upper() == "POST":
                 response = requests.post(url, json=params, headers=headers, timeout=30)
             else:
@@ -221,11 +330,11 @@ class KisBroker:
             logger.error(f"KIS API call failed: {e}")
             raise KisApiError(f"API call failed: {str(e)}")
     
-    # ========== 주식 API 구현 ==========
+    # ========== 주식 API 구현 (기존과 동일) ==========
     
     def _stock_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """주식 매수 주문"""
-        tr_id = "VTTC0802U" if self.is_virtual else "TTTC0802U"
+        tr_id = "VTTC0012U" if self.is_virtual else "TTTC0012U"
         
         params = {
             "CANO": self.auth.account_number,
@@ -246,7 +355,7 @@ class KisBroker:
     
     def _stock_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """주식 매도 주문"""
-        tr_id = "VTTC0801U" if self.is_virtual else "TTTC0801U"
+        tr_id = "VTTC0011U" if self.is_virtual else "TTTC0011U"
         
         params = {
             "CANO": self.auth.account_number,
@@ -265,8 +374,8 @@ class KisBroker:
         return f"{org_no}-{order_no}" if org_no and order_no else f"stock_sell_{int(time.time())}"
 
     def _stock_balance(self) -> Dict:
-        """주식 잔고 조회 - 실제 API 구현"""
-        tr_id = "TTTC8434R"  # 모의투자도 동일 TR ID 사용
+        """주식 잔고 조회"""
+        tr_id = "VTTC8434R" if self.is_virtual else "TTTC8434R"
         
         params = {
             "CANO": self.auth.account_number,
@@ -332,7 +441,7 @@ class KisBroker:
     
     def _stock_positions(self) -> List[Dict]:
         """주식 포지션 조회"""
-        tr_id = "TTTC8434R"
+        tr_id = "VTTC8434R" if self.is_virtual else "TTTC8434R"
         
         params = {
             "CANO": self.auth.account_number,
@@ -370,7 +479,7 @@ class KisBroker:
     
     def _stock_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """주식 매수가능 조회"""
-        tr_id = "TTTC8908R"
+        tr_id = "VTTC8908R" if self.is_virtual else "TTTC8908R"
         
         params = {
             "CANO": self.auth.account_number,
@@ -395,7 +504,7 @@ class KisBroker:
 
     def _stock_order_status(self, order_id: str) -> Dict:
         """주식 주문 상태 조회"""
-        tr_id = "TTTC8001R"  # 주식일별주문체결조회
+        tr_id = "VTTC0081R" if self.is_virtual else "TTTC0081R"
         
         # order_id에서 조직번호와 주문번호 분리
         if '-' in order_id:
@@ -452,7 +561,7 @@ class KisBroker:
             logger.warning(f"Order {order_id} cannot be cancelled. Status: {order_status['status']}")
             return False
         
-        tr_id = "VTTC0803U" if self.is_virtual else "TTTC0803U"
+        tr_id = "VTTC0013U" if self.is_virtual else "TTTC0013U"
         
         # order_id에서 조직번호와 주문번호 분리
         if '-' in order_id:
@@ -498,7 +607,7 @@ class KisBroker:
 
     def _get_cancellable_orders(self) -> List[Dict]:
         """취소 가능한 주문 목록 조회"""
-        tr_id = "TTTC8036R"
+        tr_id = "TTTC0084R" if self.is_virtual else "TTTC0084R"
         
         params = {
             "CANO": self.auth.account_number,
@@ -514,11 +623,11 @@ class KisBroker:
         
         return result.get('output', [])
     
-    # ========== 선물 API 구현 ==========
+    # ========== 선물 API 구현 (주/야간 구분 적용) ==========
     
     def _futures_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """선물 매수 주문"""
-        tr_id = "JTCE1001U" if self.is_virtual else "TTTO1101U"  # 야간거래 기준
+        """선물 매수 주문 - 주/야간 자동 구분"""
+        tr_id = self._get_tr_id('ORDER')
         
         params = {
             "ORD_PRCS_DVSN_CD": "02",  # 주문처리구분코드
@@ -532,11 +641,16 @@ class KisBroker:
         }
         
         result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order", tr_id, params)
-        return result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('odno', 'unknown')
+        
+        current_session = self.get_market_session()
+        logger.info(f"Futures buy order placed: {order_id} (Session: {current_session}, TR: {tr_id})")
+        
+        return order_id
     
     def _futures_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """선물 매도 주문"""
-        tr_id = "JTCE1001U" if self.is_virtual else "TTTO1101U"
+        """선물 매도 주문 - 주/야간 자동 구분"""
+        tr_id = self._get_tr_id('ORDER')
         
         params = {
             "ORD_PRCS_DVSN_CD": "02",
@@ -550,11 +664,16 @@ class KisBroker:
         }
         
         result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order", tr_id, params)
-        return result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('odno', 'unknown')
+        
+        current_session = self.get_market_session()
+        logger.info(f"Futures sell order placed: {order_id} (Session: {current_session}, TR: {tr_id})")
+        
+        return order_id
     
     def _futures_balance(self) -> Dict:
         """선물 잔고 조회"""
-        tr_id = "JTCE6001R"
+        tr_id = self._get_tr_id('BALANCE')
         
         params = {
             "CANO": self.auth.account_number,
@@ -570,12 +689,13 @@ class KisBroker:
         return {
             'total_balance': float(output.get('tot_evlu_amt', 0)),
             'available_balance': float(output.get('use_psbl_mney', 0)),
-            'currency': 'KRW'
+            'currency': 'KRW',
+            'account_type': 'FUTURES'
         }
     
     def _futures_positions(self) -> List[Dict]:
         """선물 포지션 조회"""
-        tr_id = "JTCE6001R"
+        tr_id = self._get_tr_id('BALANCE')
         
         params = {
             "CANO": self.auth.account_number,
@@ -591,20 +711,22 @@ class KisBroker:
         output1 = result.get('output1', [])
         
         for item in output1:
-            if int(item.get('btal_qty', 0)) != 0:  # 잔고가 있는 경우만
+            quantity = int(item.get('btal_qty', 0))
+            if quantity != 0:  # 잔고가 있는 경우만 (+ 또는 -)
                 positions.append({
                     'symbol': item.get('pdno', ''),
-                    'quantity': int(item.get('btal_qty', 0)),
+                    'quantity': quantity,
                     'avg_price': float(item.get('mkt_mny', 0)),
                     'current_value': float(item.get('evlu_amt', 0)),
-                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0))
+                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0)),
+                    'account_type': 'FUTURES'
                 })
         
         return positions
     
     def _futures_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """선물 주문가능 조회"""
-        tr_id = "JTCE1004R"
+        tr_id = self._get_tr_id('ORDERABLE')
         
         params = {
             "CANO": self.auth.account_number,
@@ -629,7 +751,7 @@ class KisBroker:
 
     def _futures_order_status(self, order_id: str) -> Dict:
         """선물 주문 상태 조회"""
-        tr_id = "JTCE5005R"
+        tr_id = self._get_tr_id('INQUIRY')
         
         from datetime import datetime
         today = datetime.today().strftime("%Y%m%d")
@@ -671,8 +793,8 @@ class KisBroker:
         return {'status': 'NOT_FOUND', 'order_id': order_id}
 
     def _futures_cancel_order(self, order_id: str) -> bool:
-        """선물 주문 취소"""
-        tr_id = "VTCE1002U" if self.is_virtual else "TTTO1103U"
+        """선물 주문 취소 - 주/야간 자동 구분"""
+        tr_id = self._get_tr_id('CANCEL')
         
         params = {
             "ORD_PRCS_DVSN_CD": "02",
@@ -693,14 +815,20 @@ class KisBroker:
                                    tr_id, params)
         
         output = result.get('output', {})
-        return bool(output.get('odno'))
+        success = bool(output.get('odno'))
+        
+        if success:
+            current_session = self.get_market_session()
+            logger.info(f"Futures order cancelled: {order_id} (Session: {current_session}, TR: {tr_id})")
+        
+        return success
     
-    # ========== 해외주식 API 구현 ==========
+    # ========== 해외주식 API 구현 (기존과 동일) ==========
     
     def _overseas_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """해외주식 매수 주문"""
         excg_cd = self._get_exchange_code(symbol)
-        tr_id = self._get_overseas_buy_tr_id(excg_cd)
+        tr_id = "VTTT1002U" if self.is_virtual else "TTTT1002U"
         
         params = {
             "CANO": self.auth.account_number,
@@ -720,7 +848,7 @@ class KisBroker:
     def _overseas_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """해외주식 매도 주문"""
         excg_cd = self._get_exchange_code(symbol)
-        tr_id = self._get_overseas_sell_tr_id(excg_cd)
+        tr_id = "VTTT1001U" if self.is_virtual else "TTTT1006U"
         
         params = {
             "CANO": self.auth.account_number,
@@ -841,17 +969,7 @@ class KisBroker:
         excg_cd = order_info.get('ovrs_excg_cd', 'NASD')
         symbol = order_info.get('pdno', '')
         
-        # 거래소별 TR ID 설정
-        if self.is_virtual:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                tr_id = "VTTT1004U"
-            else:
-                tr_id = "VTTS1003U"  # 기타 거래소
-        else:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                tr_id = "TTTT1004U"
-            else:
-                tr_id = "TTTS1003U"
+        tr_id = "VTTT1004U" if self.is_virtual else "TTTT1004U"
         
         params = {
             "CANO": self.auth.account_number,
@@ -876,7 +994,7 @@ class KisBroker:
         tr_id = "VTTS3018R" if self.is_virtual else "TTTS3018R"
         
         # 주요 거래소들 확인
-        for excg_cd in ["NASD", "NYSE", "SEHK"]:
+        for excg_cd in ["NASD", "NYSE"]:
             params = {
                 "CANO": self.auth.account_number,
                 "ACNT_PRDT_CD": self.auth.account_product,
@@ -905,35 +1023,6 @@ class KisBroker:
         if len(symbol) <= 5 and symbol.isalpha():
             return "NASD"  # 나스닥
         return "NYSE"  # 뉴욕증권거래소
-    
-    def _get_overseas_buy_tr_id(self, excg_cd: str) -> str:
-        """해외주식 매수 TR ID 반환"""
-        if self.is_virtual:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                return "VTTT1002U"  # 미국 매수
-            elif excg_cd == "SEHK":
-                return "VTTS1002U"  # 홍콩 매수
-            # 기타 거래소들...
-        else:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                return "TTTT1002U"
-            elif excg_cd == "SEHK":
-                return "TTTS1002U"
-        return "TTTT1002U"  # 기본값
-    
-    def _get_overseas_sell_tr_id(self, excg_cd: str) -> str:
-        """해외주식 매도 TR ID 반환"""
-        if self.is_virtual:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                return "VTTT1006U"  # 미국 매도
-            elif excg_cd == "SEHK":
-                return "VTTS1001U"  # 홍콩 매도
-        else:
-            if excg_cd in ("NASD", "NYSE", "AMEX"):
-                return "TTTT1006U"
-            elif excg_cd == "SEHK":
-                return "TTTS1001U"
-        return "TTTT1006U"  # 기본값
     
     # ========== 상태 매핑 헬퍼 메서드 ==========
 
@@ -971,88 +1060,7 @@ class KisBroker:
         }
         return status_map.get(status_code, 'UNKNOWN')
     
-    # ========== 응답 표준화 메서드 ==========
-    
-    def _standardize_balance_response(self, raw_response: Dict, account_type: str) -> Dict:
-        """잔고 응답 표준화"""
-        if account_type == "FUTURES":
-            output = raw_response.get('output2', {})
-            return {
-                'total_balance': float(output.get('tot_evlu_amt', 0)),
-                'available_balance': float(output.get('use_psbl_mney', 0)),
-                'currency': 'KRW',
-                'account_type': account_type
-            }
-        elif account_type == "OVERSEAS":
-            output = raw_response.get('output2', {})
-            return {
-                'total_balance': float(output.get('tot_evlu_pfls_amt', 0)),
-                'available_balance': float(output.get('psbl_ord_amt', 0)),
-                'currency': 'USD',
-                'account_type': account_type
-            }
-        else:  # STOCK
-            return {
-                'total_balance': 10000000.0,
-                'available_balance': 10000000.0,
-                'currency': 'KRW',
-                'account_type': account_type
-            }
-    
-    def _standardize_position_response(self, raw_response: Dict, account_type: str) -> List[Dict]:
-        """포지션 응답 표준화"""
-        positions = []
-        
-        if account_type == "FUTURES":
-            output1 = raw_response.get('output1', [])
-            for item in output1:
-                if int(item.get('btal_qty', 0)) != 0:
-                    positions.append({
-                        'symbol': item.get('pdno', ''),
-                        'quantity': int(item.get('btal_qty', 0)),
-                        'avg_price': float(item.get('mkt_mny', 0)),
-                        'current_value': float(item.get('evlu_amt', 0)),
-                        'unrealized_pnl': float(item.get('evlu_pfls_amt', 0)),
-                        'account_type': account_type
-                    })
-        elif account_type == "OVERSEAS":
-            output1 = raw_response.get('output1', [])
-            for item in output1:
-                if int(item.get('ovrs_cblc_qty', 0)) > 0:
-                    positions.append({
-                        'symbol': item.get('ovrs_pdno', ''),
-                        'quantity': int(item.get('ovrs_cblc_qty', 0)),
-                        'avg_price': float(item.get('pchs_avg_pric', 0)),
-                        'current_value': float(item.get('ovrs_stck_evlu_amt', 0)),
-                        'unrealized_pnl': float(item.get('frcr_evlu_pfls_amt', 0)),
-                        'account_type': account_type
-                    })
-        
-        return positions
-    
-    def _handle_api_error(self, response: Dict, operation: str) -> None:
-        """API 에러 처리"""
-        rt_cd = response.get('rt_cd', '1')
-        if rt_cd != '0':
-            error_msg = response.get('msg1', 'Unknown API error')
-            error_code = response.get('msg_cd', 'UNKNOWN')
-            
-            logger.error(f"{operation} failed - Code: {error_code}, Message: {error_msg}")
-            
-            # 에러 코드별 적절한 예외 발생
-            exception = get_kis_exception(error_code, error_msg)
-            raise exception
-    
-    def _retry_api_call(self, func, max_retries: int = 3, delay: float = 1.0):
-        """API 호출 재시도 로직"""
-        for attempt in range(max_retries):
-            try:
-                return func()
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise e
-                logger.warning(f"API call attempt {attempt + 1} failed: {e}")
-                time.sleep(delay * (attempt + 1))  # 지수 백오프
+    # ========== 유틸리티 메서드 ==========
     
     def _validate_order_params(self, symbol: str, quantity: int, price: Optional[float]) -> None:
         """주문 파라미터 유효성 검증"""
@@ -1077,10 +1085,16 @@ class KisBroker:
         
         return order_id or f"unknown_{int(time.time())}"
     
-    def _get_market_status(self) -> Dict:
-        """시장 상태 정보 (기본 구현)"""
+    def get_market_info(self) -> Dict:
+        """현재 시장 정보 반환"""
+        current_session = self.get_market_session()
+        current_time = datetime.now()
+        
         return {
-            'is_open': True,  # 실제로는 시장 시간 체크 필요
-            'timezone': 'Asia/Seoul',
-            'current_time': time.strftime('%Y-%m-%d %H:%M:%S')
+            'current_session': current_session,
+            'current_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+            'is_trading_hours': current_session in ['DAY', 'NIGHT'],
+            'account_type': self.account_type,
+            'is_virtual': self.is_virtual,
+            'timezone': 'Asia/Seoul'
         }

@@ -115,12 +115,40 @@ class KisBroker:
             logger.error(f"Get balance failed: {e}")
             return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
     
+    def get_order_status(self, order_id: str) -> Dict:
+        """주문 상태 조회"""
+        if not order_id or order_id == 'unknown':
+            return {'status': 'UNKNOWN', 'order_id': order_id, 'error': 'Invalid order ID'}
+        
+        try:
+            if self.account_type == "STOCK":
+                return self._stock_order_status(order_id)
+            elif self.account_type == "FUTURES":
+                return self._futures_order_status(order_id)
+            elif self.account_type == "OVERSEAS":
+                return self._overseas_order_status(order_id)
+            else:
+                return {'status': 'UNKNOWN', 'order_id': order_id, 'error': 'Unsupported account type'}
+        except Exception as e:
+            logger.error(f"Get order status failed: {e}")
+            return {'status': 'ERROR', 'order_id': order_id, 'error': str(e)}
+
     def cancel_order(self, order_id: str) -> bool:
         """주문 취소"""
+        if not order_id or order_id == 'unknown':
+            logger.error("Cannot cancel order with invalid ID")
+            return False
+        
         try:
-            # 계좌 타입별 취소 API 호출 (임시 구현)
-            logger.info(f"Order cancelled: {order_id}")
-            return True
+            if self.account_type == "STOCK":
+                return self._stock_cancel_order(order_id)
+            elif self.account_type == "FUTURES":
+                return self._futures_cancel_order(order_id)
+            elif self.account_type == "OVERSEAS":
+                return self._overseas_cancel_order(order_id)
+            else:
+                logger.error(f"Unsupported account type for cancel: {self.account_type}")
+                return False
         except Exception as e:
             logger.error(f"Cancel order failed: {e}")
             return False
@@ -130,6 +158,8 @@ class KisBroker:
         try:
             if self.account_type == "FUTURES":
                 return self._futures_orderable_amount(symbol, price)
+            elif self.account_type == "STOCK":
+                return self._stock_orderable_amount(symbol, price)
             else:
                 # 기본 구현
                 return {
@@ -190,6 +220,299 @@ class KisBroker:
                 raise
             logger.error(f"KIS API call failed: {e}")
             raise KisApiError(f"API call failed: {str(e)}")
+    
+    # ========== 주식 API 구현 ==========
+    
+    def _stock_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
+        """주식 매수 주문"""
+        tr_id = "VTTC0802U" if self.is_virtual else "TTTC0802U"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(int(price)) if price else "0"
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
+        output = result.get('output', {})
+        
+        # 주문번호 조합: 조직번호 + 주문번호
+        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
+        order_no = output.get('ODNO', '')
+        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_buy_{int(time.time())}"
+    
+    def _stock_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
+        """주식 매도 주문"""
+        tr_id = "VTTC0801U" if self.is_virtual else "TTTC0801U"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_DVSN": "00" if price else "01",
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(int(price)) if price else "0"
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
+        output = result.get('output', {})
+        
+        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
+        order_no = output.get('ODNO', '')
+        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_sell_{int(time.time())}"
+
+    def _stock_balance(self) -> Dict:
+        """주식 잔고 조회 - 실제 API 구현"""
+        tr_id = "TTTC8434R"  # 모의투자도 동일 TR ID 사용
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "AFHR_FLPR_YN": "N",  # 시간외단일가여부
+            "OFL_YN": "",  # 오프라인여부
+            "INQR_DVSN": "00",  # 조회구분 (전체)
+            "UNPR_DVSN": "01",  # 단가구분
+            "FUND_STTL_ICLD_YN": "N",  # 펀드결제분포함여부
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",  # 전일매매포함
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        try:
+            result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance", 
+                                       tr_id, params, method="GET")
+            
+            # output2에서 계좌 요약 정보 추출
+            output2 = result.get('output2', [])
+            if output2:
+                balance_data = output2[0] if isinstance(output2, list) else output2
+                
+                # 실제 API 응답 필드들을 매핑
+                total_balance = float(balance_data.get('tot_evlu_amt', 0))  # 총평가금액
+                available_balance = float(balance_data.get('prvs_rcdl_excc_amt', 0))  # 예수금총금액
+                
+                # 예수금이 0이면 매수여력으로 대체 시도
+                if available_balance == 0:
+                    available_balance = float(balance_data.get('nxdy_excc_amt', 0))  # 익일정산금액
+                
+                return {
+                    'total_balance': total_balance,
+                    'available_balance': available_balance,
+                    'currency': 'KRW',
+                    'account_type': 'STOCK',
+                    'deposit_balance': float(balance_data.get('prvs_rcdl_excc_amt', 0)),  # 예수금
+                    'total_purchase_amount': float(balance_data.get('pchs_amt_smtl_amt', 0)),  # 매입금액합계
+                    'total_evaluation_amount': float(balance_data.get('evlu_amt_smtl_amt', 0)),  # 평가금액합계
+                    'total_profit_loss': float(balance_data.get('evlu_pfls_smtl_amt', 0))  # 평가손익합계
+                }
+            else:
+                logger.warning("No balance data in API response")
+                return {
+                    'total_balance': 0.0,
+                    'available_balance': 0.0,
+                    'currency': 'KRW',
+                    'account_type': 'STOCK',
+                    'error': 'No balance data available'
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to get stock balance: {e}")
+            # API 호출 실패시에만 기본값 반환
+            return {
+                'total_balance': 0.0,
+                'available_balance': 0.0,
+                'currency': 'KRW',
+                'account_type': 'STOCK',
+                'error': f'API call failed: {str(e)}'
+            }
+    
+    def _stock_positions(self) -> List[Dict]:
+        """주식 포지션 조회"""
+        tr_id = "TTTC8434R"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "00",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N", 
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance",
+                                   tr_id, params, method="GET")
+        
+        positions = []
+        output1 = result.get('output1', [])
+        
+        for item in output1:
+            # 보유수량이 있는 종목만 포함
+            quantity = int(item.get('hldg_qty', 0))
+            if quantity > 0:
+                positions.append({
+                    'symbol': item.get('pdno', ''),
+                    'quantity': quantity,
+                    'avg_price': float(item.get('pchs_avg_pric', 0)),
+                    'current_value': float(item.get('evlu_amt', 0)),
+                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0))
+                })
+        
+        return positions
+    
+    def _stock_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
+        """주식 매수가능 조회"""
+        tr_id = "TTTC8908R"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": symbol,
+            "ORD_UNPR": str(int(price)) if price else "",
+            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
+            "CMA_EVLU_AMT_ICLD_YN": "N",  # CMA평가금액포함여부
+            "OVRS_ICLD_YN": "Y"  # 해외포함여부
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+                                   tr_id, params, method="GET")
+        
+        output = result.get('output', {})
+        return {
+            'symbol': symbol,
+            'orderable_quantity': int(output.get('max_buy_qty', 0)),
+            'orderable_amount': float(output.get('ord_psbl_cash', 0)),
+            'unit_price': float(price or output.get('psbl_qty_calc_unpr', 0))
+        }
+
+    def _stock_order_status(self, order_id: str) -> Dict:
+        """주식 주문 상태 조회"""
+        tr_id = "TTTC8001R"  # 주식일별주문체결조회
+        
+        # order_id에서 조직번호와 주문번호 분리
+        if '-' in order_id:
+            org_no, odno = order_id.split('-', 1)
+        else:
+            org_no, odno = "", order_id
+        
+        from datetime import datetime
+        today = datetime.today().strftime("%Y%m%d")
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "INQR_STRT_DT": today,  # 오늘 날짜
+            "INQR_END_DT": today,
+            "SLL_BUY_DVSN_CD": "00",  # 전체
+            "INQR_DVSN": "01",  # 정순
+            "PDNO": "",  # 전체 종목
+            "CCLD_DVSN": "00",  # 전체 (체결/미체결)
+            "ORD_GNO_BRNO": "",
+            "ODNO": odno,  # 특정 주문번호로 조회
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-daily-ccld", 
+                                   tr_id, params, method="GET")
+        
+        # 주문 내역에서 해당 주문 찾기
+        orders = result.get('output1', [])
+        for order in orders:
+            if order.get('odno') == odno:
+                return {
+                    'status': self._map_order_status(order.get('ord_dvsn_name', '')),
+                    'order_id': order_id,
+                    'symbol': order.get('pdno', ''),
+                    'quantity': int(order.get('ord_qty', 0)),
+                    'filled_quantity': int(order.get('tot_ccld_qty', 0)),
+                    'price': float(order.get('ord_unpr', 0)),
+                    'avg_fill_price': float(order.get('avg_prvs', 0)) if order.get('avg_prvs') else 0.0,
+                    'order_time': order.get('ord_tmd', ''),
+                    'side': 'BUY' if order.get('sll_buy_dvsn_cd') == '02' else 'SELL'
+                }
+        
+        return {'status': 'NOT_FOUND', 'order_id': order_id}
+
+    def _stock_cancel_order(self, order_id: str) -> bool:
+        """주식 주문 취소"""
+        # 먼저 주문 상태 조회하여 취소 가능 여부 확인
+        order_status = self._stock_order_status(order_id)
+        if order_status['status'] not in ['PENDING', 'PARTIAL_FILLED']:
+            logger.warning(f"Order {order_id} cannot be cancelled. Status: {order_status['status']}")
+            return False
+        
+        tr_id = "VTTC0803U" if self.is_virtual else "TTTC0803U"
+        
+        # order_id에서 조직번호와 주문번호 분리
+        if '-' in order_id:
+            org_no, odno = order_id.split('-', 1)
+        else:
+            # 조직번호를 찾기 위해 미체결 조회 필요
+            cancel_orders = self._get_cancellable_orders()
+            target_order = None
+            for order in cancel_orders:
+                if order.get('odno') == order_id:
+                    target_order = order
+                    break
+            
+            if not target_order:
+                logger.error(f"Cannot find cancellable order: {order_id}")
+                return False
+            
+            org_no = target_order.get('ord_gno_brno', '')
+            odno = order_id
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "KRX_FWDG_ORD_ORGNO": org_no,  # 주문조직번호
+            "ORGN_ODNO": odno,  # 원주문번호
+            "ORD_DVSN": "00",  # 지정가 (취소시에도 필요)
+            "RVSE_CNCL_DVSN_CD": "02",  # 취소
+            "ORD_QTY": "0",  # 전량 취소
+            "ORD_UNPR": "0",  # 취소시 0
+            "QTY_ALL_ORD_YN": "Y"  # 잔량전부 취소
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-rvsecncl", tr_id, params)
+        
+        # 취소 성공 여부 확인
+        output = result.get('output', {})
+        cancel_order_id = output.get('odno')
+        if cancel_order_id:
+            logger.info(f"Order cancelled successfully: {order_id} -> {cancel_order_id}")
+            return True
+        
+        return False
+
+    def _get_cancellable_orders(self) -> List[Dict]:
+        """취소 가능한 주문 목록 조회"""
+        tr_id = "TTTC8036R"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "INQR_DVSN_1": "1",  # 주문순
+            "INQR_DVSN_2": "0",  # 전체
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl", 
+                                   tr_id, params, method="GET")
+        
+        return result.get('output', [])
     
     # ========== 선물 API 구현 ==========
     
@@ -303,6 +626,74 @@ class KisBroker:
             'orderable_amount': float(output.get('ord_psbl_amt', 0)),
             'unit_price': float(price or output.get('nw_unpr', 0))
         }
+
+    def _futures_order_status(self, order_id: str) -> Dict:
+        """선물 주문 상태 조회"""
+        tr_id = "JTCE5005R"
+        
+        from datetime import datetime
+        today = datetime.today().strftime("%Y%m%d")
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "STRT_ORD_DT": today,
+            "END_ORD_DT": today,
+            "SLL_BUY_DVSN_CD": "00",  # 전체
+            "CCLD_NCCS_DVSN": "00",  # 전체
+            "SORT_SQN": "DS",
+            "STRT_ODNO": "",
+            "PDNO": "",
+            "MKET_ID_CD": "",
+            "FUOP_DVSN_CD": "",
+            "SCRN_DVSN": "02",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": ""
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-ngt-ccnl", 
+                                   tr_id, params, method="GET")
+        
+        orders = result.get('output1', [])
+        for order in orders:
+            if order.get('odno') == order_id:
+                return {
+                    'status': self._map_futures_status(order.get('ord_dvsn_name', '')),
+                    'order_id': order_id,
+                    'symbol': order.get('pdno', ''),
+                    'quantity': int(order.get('ord_qty', 0)),
+                    'filled_quantity': int(order.get('ccld_qty', 0)),
+                    'price': float(order.get('ord_unpr', 0)),
+                    'order_time': order.get('ord_tmd', ''),
+                    'side': 'BUY' if order.get('sll_buy_dvsn_cd') == '02' else 'SELL'
+                }
+        
+        return {'status': 'NOT_FOUND', 'order_id': order_id}
+
+    def _futures_cancel_order(self, order_id: str) -> bool:
+        """선물 주문 취소"""
+        tr_id = "VTCE1002U" if self.is_virtual else "TTTO1103U"
+        
+        params = {
+            "ORD_PRCS_DVSN_CD": "02",
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "RVSE_CNCL_DVSN_CD": "02",  # 취소
+            "ORGN_ODNO": order_id,
+            "ORD_QTY": "0",  # 전량 취소
+            "UNIT_PRICE": "0",
+            "NMPR_TYPE_CD": "",
+            "KRX_NMPR_CNDT_CD": "",
+            "RMN_QTY_YN": "Y",  # 잔량전부
+            "FUOP_ITEM_DVSN_CD": "",
+            "ORD_DVSN_CD": "02"  # 취소시 기본값
+        }
+        
+        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order-rvsecncl", 
+                                   tr_id, params)
+        
+        output = result.get('output', {})
+        return bool(output.get('odno'))
     
     # ========== 해외주식 API 구현 ==========
     
@@ -395,6 +786,118 @@ class KisBroker:
                 })
         
         return positions
+
+    def _overseas_order_status(self, order_id: str) -> Dict:
+        """해외주식 주문 상태 조회"""
+        tr_id = "VTTS3035R" if self.is_virtual else "TTTS3035R"
+        
+        from datetime import datetime
+        today = datetime.today().strftime("%Y%m%d")
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "PDNO": "%",  # 전체 종목
+            "ORD_STRT_DT": today,
+            "ORD_END_DT": today,
+            "SLL_BUY_DVSN": "00",  # 전체
+            "CCLD_NCCS_DVSN": "00",  # 전체
+            "OVRS_EXCG_CD": "%",  # 전체 거래소
+            "SORT_SQN": "DS",
+            "ORD_DT": "",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": ""
+        }
+        
+        result = self._call_kis_api("/uapi/overseas-stock/v1/trading/inquire-ccnl", 
+                                   tr_id, params, method="GET")
+        
+        orders = result.get('output', [])
+        for order in orders:
+            if order.get('odno') == order_id:
+                return {
+                    'status': self._map_overseas_status(order.get('ord_stat_cd', '')),
+                    'order_id': order_id,
+                    'symbol': order.get('pdno', ''),
+                    'quantity': int(order.get('ord_qty', 0)),
+                    'filled_quantity': int(order.get('ccld_qty', 0)),
+                    'price': float(order.get('ord_unpr', 0)),
+                    'order_time': order.get('ord_tmd', ''),
+                    'side': 'BUY' if order.get('sll_buy_dvsn') == '02' else 'SELL'
+                }
+        
+        return {'status': 'NOT_FOUND', 'order_id': order_id}
+
+    def _overseas_cancel_order(self, order_id: str) -> bool:
+        """해외주식 주문 취소"""
+        # 먼저 미체결 내역에서 해당 주문 찾기
+        order_info = self._find_overseas_pending_order(order_id)
+        if not order_info:
+            logger.error(f"Cannot find pending overseas order: {order_id}")
+            return False
+        
+        excg_cd = order_info.get('ovrs_excg_cd', 'NASD')
+        symbol = order_info.get('pdno', '')
+        
+        # 거래소별 TR ID 설정
+        if self.is_virtual:
+            if excg_cd in ("NASD", "NYSE", "AMEX"):
+                tr_id = "VTTT1004U"
+            else:
+                tr_id = "VTTS1003U"  # 기타 거래소
+        else:
+            if excg_cd in ("NASD", "NYSE", "AMEX"):
+                tr_id = "TTTT1004U"
+            else:
+                tr_id = "TTTS1003U"
+        
+        params = {
+            "CANO": self.auth.account_number,
+            "ACNT_PRDT_CD": self.auth.account_product,
+            "OVRS_EXCG_CD": excg_cd,
+            "PDNO": symbol,
+            "ORGN_ODNO": order_id,
+            "RVSE_CNCL_DVSN_CD": "02",  # 취소
+            "ORD_QTY": "0",  # 전량 취소
+            "OVRS_ORD_UNPR": "0",
+            "MGCO_APTM_ODNO": "",
+            "ORD_SVR_DVSN_CD": "0"
+        }
+        
+        result = self._call_kis_api("/uapi/overseas-stock/v1/trading/order-rvsecncl", tr_id, params)
+        
+        output = result.get('output', {})
+        return bool(output.get('ODNO'))
+
+    def _find_overseas_pending_order(self, order_id: str) -> Optional[Dict]:
+        """해외주식 미체결 주문 찾기"""
+        tr_id = "VTTS3018R" if self.is_virtual else "TTTS3018R"
+        
+        # 주요 거래소들 확인
+        for excg_cd in ["NASD", "NYSE", "SEHK"]:
+            params = {
+                "CANO": self.auth.account_number,
+                "ACNT_PRDT_CD": self.auth.account_product,
+                "OVRS_EXCG_CD": excg_cd,
+                "SORT_SQN": "DS",
+                "CTX_AREA_FK200": "",
+                "CTX_AREA_NK200": ""
+            }
+            
+            try:
+                result = self._call_kis_api("/uapi/overseas-stock/v1/trading/inquire-nccs", 
+                                           tr_id, params, method="GET")
+                
+                orders = result.get('output', [])
+                for order in orders:
+                    if order.get('odno') == order_id:
+                        return order
+            except Exception:
+                continue  # 다음 거래소 시도
+        
+        return None
     
     def _get_exchange_code(self, symbol: str) -> str:
         """종목 코드로 거래소 코드 추정"""
@@ -432,143 +935,41 @@ class KisBroker:
                 return "TTTS1001U"
         return "TTTT1006U"  # 기본값
     
-    # ========== 주식 API 구현 ==========
-    
-    def _stock_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """주식 매수 주문"""
-        tr_id = "VTTC0802U" if self.is_virtual else "TTTC0802U"
-        
-        params = {
-            "CANO": self.auth.account_number,
-            "ACNT_PRDT_CD": self.auth.account_product,
-            "PDNO": symbol,
-            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
-            "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(int(price)) if price else "0"
+    # ========== 상태 매핑 헬퍼 메서드 ==========
+
+    def _map_order_status(self, status_name: str) -> str:
+        """주식 주문 상태 매핑"""
+        status_map = {
+            '접수': 'PENDING',
+            '체결': 'FILLED',
+            '확인': 'CONFIRMED',
+            '거부': 'REJECTED',
+            '취소': 'CANCELLED',
+            '부분체결': 'PARTIAL_FILLED'
         }
-        
-        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
-        output = result.get('output', {})
-        
-        # 주문번호 조합: 조직번호 + 주문번호
-        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
-        order_no = output.get('ODNO', '')
-        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_buy_{int(time.time())}"
-    
-    def _stock_sell(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
-        """주식 매도 주문"""
-        tr_id = "VTTC0801U" if self.is_virtual else "TTTC0801U"
-        
-        params = {
-            "CANO": self.auth.account_number,
-            "ACNT_PRDT_CD": self.auth.account_product,
-            "PDNO": symbol,
-            "ORD_DVSN": "00" if price else "01",
-            "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(int(price)) if price else "0"
+        return status_map.get(status_name, 'UNKNOWN')
+
+    def _map_futures_status(self, status_name: str) -> str:
+        """선물 주문 상태 매핑"""
+        status_map = {
+            '접수': 'PENDING',
+            '체결': 'FILLED',
+            '거부': 'REJECTED',
+            '취소': 'CANCELLED',
+            '부분체결': 'PARTIAL_FILLED'
         }
-        
-        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/order-cash", tr_id, params)
-        output = result.get('output', {})
-        
-        org_no = output.get('KRX_FWDG_ORD_ORGNO', '')
-        order_no = output.get('ODNO', '')
-        return f"{org_no}-{order_no}" if org_no and order_no else f"stock_sell_{int(time.time())}"
-    
-    def _stock_balance(self) -> Dict:
-        """주식 잔고 조회"""
-        tr_id = "TTTC8434R"  # 모의투자도 동일 TR ID 사용
-        
-        params = {
-            "CANO": self.auth.account_number,
-            "ACNT_PRDT_CD": self.auth.account_product,
-            "AFHR_FLPR_YN": "N",  # 시간외단일가여부
-            "OFL_YN": "",  # 오프라인여부
-            "INQR_DVSN": "00",  # 조회구분
-            "UNPR_DVSN": "01",  # 단가구분
-            "FUND_STTL_ICLD_YN": "N",  # 펀드결제분포함여부
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "00",  # 전일매매포함
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
+        return status_map.get(status_name, 'UNKNOWN')
+
+    def _map_overseas_status(self, status_code: str) -> str:
+        """해외주식 주문 상태 매핑"""
+        status_map = {
+            '02': 'PENDING',     # 접수
+            '10': 'FILLED',      # 전량체결
+            '11': 'PARTIAL_FILLED',  # 부분체결
+            '31': 'CANCELLED',   # 취소
+            '32': 'REJECTED'     # 거부
         }
-        
-        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance", 
-                                   tr_id, params, method="GET")
-        
-        output = result.get('output2', [])
-        if output:
-            balance_data = output[0] if isinstance(output, list) else output
-            return {
-                'total_balance': float(balance_data.get('tot_evlu_amt', 0)),
-                'available_balance': float(balance_data.get('prvs_rcdl_excc_amt', 0)),
-                'currency': 'KRW'
-            }
-        
-        return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
-    
-    def _stock_positions(self) -> List[Dict]:
-        """주식 포지션 조회"""
-        tr_id = "TTTC8434R"
-        
-        params = {
-            "CANO": self.auth.account_number,
-            "ACNT_PRDT_CD": self.auth.account_product,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "00",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N", 
-            "PRCS_DVSN": "00",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
-        }
-        
-        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-balance",
-                                   tr_id, params, method="GET")
-        
-        positions = []
-        output1 = result.get('output1', [])
-        
-        for item in output1:
-            # 보유수량이 있는 종목만 포함
-            quantity = int(item.get('hldg_qty', 0))
-            if quantity > 0:
-                positions.append({
-                    'symbol': item.get('pdno', ''),
-                    'quantity': quantity,
-                    'avg_price': float(item.get('pchs_avg_pric', 0)),
-                    'current_value': float(item.get('evlu_amt', 0)),
-                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0))
-                })
-        
-        return positions
-    
-    def _stock_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
-        """주식 매수가능 조회"""
-        tr_id = "TTTC8908R"
-        
-        params = {
-            "CANO": self.auth.account_number,
-            "ACNT_PRDT_CD": self.auth.account_product,
-            "PDNO": symbol,
-            "ORD_UNPR": str(int(price)) if price else "",
-            "ORD_DVSN": "00" if price else "01",  # 지정가/시장가
-            "CMA_EVLU_AMT_ICLD_YN": "N",  # CMA평가금액포함여부
-            "OVRS_ICLD_YN": "Y"  # 해외포함여부
-        }
-        
-        result = self._call_kis_api("/uapi/domestic-stock/v1/trading/inquire-psbl-order",
-                                   tr_id, params, method="GET")
-        
-        output = result.get('output', {})
-        return {
-            'symbol': symbol,
-            'orderable_quantity': int(output.get('max_buy_qty', 0)),
-            'orderable_amount': float(output.get('ord_psbl_cash', 0)),
-            'unit_price': float(price or output.get('psbl_qty_calc_unpr', 0))
-        }
+        return status_map.get(status_code, 'UNKNOWN')
     
     # ========== 응답 표준화 메서드 ==========
     

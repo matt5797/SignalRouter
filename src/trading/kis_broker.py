@@ -5,11 +5,12 @@ KisBroker - 한국투자증권 API 직접 호출 브로커 클래스
 import json
 import time
 import requests
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Set
 from decimal import Decimal
 import logging
 from pathlib import Path
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, date
 from .kis_auth import KisAuth
 from .auth_factory import AuthFactory
 from .secret_loader import SecretLoader
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 class KisBroker:
     """KIS API 직접 호출 브로커 클래스"""
+    
+    # 클래스 변수로 휴장일 캐시 (모든 인스턴스 공유)
+    _holiday_cache = {}
+    _holiday_cache_date = None
     
     # TR ID 매핑 테이블 (계좌타입, 세션, 실전/모의, 액션)
     TR_MAPPING = {
@@ -57,6 +62,58 @@ class KisBroker:
         ('FUTURES', 'NIGHT', False, 'ORDERABLE'): 'STTN5105R', # 실전 주문가능조회
         #('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTN5105R',  # 모의 주문가능조회 # 미지원
     }
+
+    # 주요 종목별 거래소 매핑 (100개 주요 종목)
+    MAJOR_SYMBOLS_EXCHANGE = {
+        # 🔥 MEGA CAP (시가총액 상위)
+        "AAPL": "NASD", "MSFT": "NASD", "GOOGL": "NASD", "GOOG": "NASD", "AMZN": "NASD",
+        "NVDA": "NASD", "META": "NASD", "TSLA": "NASD", "AVGO": "NASD", "ORCL": "NASD",
+        "NFLX": "NASD", "COST": "NASD", "ADBE": "NASD", "CSCO": "NASD", "AMD": "NASD",
+        "INTC": "NASD", "CMCSA": "NASD", "PEP": "NASD", "QCOM": "NASD", "TXN": "NASD",
+        
+        # 💰 NYSE 대표 종목들
+        "BRK.A": "NYSE", "BRK.B": "NYSE", "JPM": "NYSE", "V": "NYSE", "UNH": "NYSE",
+        "JNJ": "NYSE", "WMT": "NYSE", "PG": "NYSE", "HD": "NYSE", "MA": "NYSE",
+        "BAC": "NYSE", "XOM": "NYSE", "CVX": "NYSE", "ABBV": "NYSE", "KO": "NYSE",
+        "MRK": "NYSE", "LLY": "NYSE", "PFE": "NYSE", "TMO": "NYSE", "DIS": "NYSE",
+        "ACN": "NYSE", "VZ": "NYSE", "ADBE": "NYSE", "CRM": "NYSE", "NKE": "NYSE",
+        "WFC": "NYSE", "MS": "NYSE", "GS": "NYSE", "MMM": "NYSE", "CAT": "NYSE",
+        
+        # 🚀 인기 성장주 (NASDAQ)
+        "ZOOM": "NASD", "ZM": "NASD", "SHOP": "NYSE", "SQ": "NYSE", "PYPL": "NASD",
+        "ROKU": "NASD", "SNAP": "NYSE", "TWTR": "NYSE", "UBER": "NYSE", "LYFT": "NASD",
+        "SPOT": "NYSE", "NKLA": "NASD", "PLTR": "NYSE", "SNOW": "NYSE", "ABNB": "NASD",
+        
+        # 📊 주요 ETF
+        "SPY": "NYSE", "QQQ": "NASD", "IWM": "NYSE", "VTI": "NYSE", "VOO": "NYSE",
+        "VEA": "NYSE", "VWO": "NYSE", "AGG": "NYSE", "BND": "NASD", "TLT": "NASD",
+        "GLD": "NYSE", "SLV": "NYSE", "USO": "NYSE", "XLF": "NYSE", "XLK": "NASD",
+        
+        # 🏭 전통 산업 (NYSE)
+        "IBM": "NYSE", "T": "NYSE", "GM": "NYSE", "F": "NYSE", "GE": "NYSE",
+        "BA": "NYSE", "RTX": "NYSE", "HON": "NYSE", "UPS": "NYSE", "FDX": "NYSE",
+        
+        # 🇰🇷 한국 ADR
+        "KT": "NYSE", "KB": "NYSE", "SHI": "NYSE", "LPL": "NYSE", "SKM": "NYSE",
+        
+        # 🇨🇳 중국 주요 종목
+        "BABA": "NYSE", "JD": "NASD", "BIDU": "NASD", "NIO": "NYSE", "XPEV": "NYSE",
+        "PDD": "NASD", "TME": "NYSE", "NTES": "NASD", "WB": "NASD", "ZTO": "NYSE",
+    }
+    
+    # 거래소별 심볼 패턴 (정규식)
+    EXCHANGE_PATTERNS = [
+        # NYSE 패턴들
+        (r'^[A-Z]{1,3}\.[A-Z]$', "NYSE"),      # BRK.A, BRK.B 형태
+        (r'^[A-Z]{1,2}-[A-Z]{1,2}$', "NYSE"),  # 하이픈 포함 (일부 ETF)
+        
+        # NASDAQ 패턴들  
+        (r'^[A-Z]{4,5}$', "NASD"),             # 4-5글자 (대부분 NASDAQ)
+        (r'^Q[A-Z]{3}$', "NASD"),              # Q로 시작 (NASDAQ ETF)
+        
+        # NYSE 기본 패턴
+        (r'^[A-Z]{1,3}$', "NYSE"),             # 1-3글자 (전통적으로 NYSE)
+    ]
     
     def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
                  default_real_secret: Optional[str] = None, 
@@ -88,29 +145,35 @@ class KisBroker:
         logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
     
     @staticmethod
-    def get_market_session(target_time: datetime = None) -> str:
+    def get_market_session(self, target_time: datetime = None) -> str:
         """
-        거래 시간대 판단
+        거래 시간대 판단 (휴장일 API 활용)
         
         Args:
             target_time: 판단할 시간 (None이면 현재 시간)
             
         Returns:
-            'DAY': 주간거래 (09:00~15:45)
+            'DAY': 주간거래 (09:00~15:30)
             'NIGHT': 야간거래 (18:00~06:00)  
-            'CLOSED': 휴장
+            'CLOSED': 휴장 (주말, 공휴일, 장외시간)
         """
         if target_time is None:
             target_time = datetime.now()
         
-        # 주말 체크
+        # 1단계: 주말 체크
         if target_time.weekday() >= 5:  # 토요일(5), 일요일(6)
             return 'CLOSED'
         
+        # 2단계: 휴장일 체크 (API 활용)
+        target_date = target_time.date()
+        if self._is_holiday(target_date):
+            return 'CLOSED'
+        
+        # 3단계: 시간대 체크
         current_time = target_time.time()
         
-        # 주간거래: 09:00~15:45
-        if dt_time(9, 0) <= current_time <= dt_time(15, 45):
+        # 주간거래: 09:00~15:30
+        if dt_time(9, 0) <= current_time <= dt_time(15, 30):
             return 'DAY'
         
         # 야간거래: 18:00~23:59 또는 00:00~06:00
@@ -119,6 +182,77 @@ class KisBroker:
         
         # 나머지 시간은 휴장
         return 'CLOSED'
+    
+    def _is_holiday(self, target_date: date) -> bool:
+        """
+        휴장일 여부 확인 (API 기반, 일별 캐싱)
+        
+        Args:
+            target_date: 확인할 날짜
+            
+        Returns:
+            True: 휴장일, False: 개장일
+        """
+        try:
+            # 캐시 확인 (같은 날짜면 재사용)
+            if (self._holiday_cache_date == target_date and 
+                target_date.isoformat() in self._holiday_cache):
+                return self._holiday_cache[target_date.isoformat()]
+            
+            # 새로운 날짜면 API 호출
+            holidays = self._fetch_holidays(target_date.year)
+            
+            # 캐시 업데이트
+            self._holiday_cache_date = target_date
+            is_holiday = target_date.isoformat() in holidays
+            self._holiday_cache[target_date.isoformat()] = is_holiday
+            
+            return is_holiday
+            
+        except Exception as e:
+            logger.warning(f"Holiday check failed, using fallback: {e}")
+            return False
+    
+    def _fetch_holidays(self, year: int) -> Set[str]:
+        """
+        해당 연도의 휴장일 목록 조회 (KIS API 활용)
+        
+        Args:
+            year: 조회할 연도
+            
+        Returns:
+            Set[str]: 휴장일 목록 (YYYY-MM-DD 형식)
+        """
+        try:
+            # 휴장일 조회 API 호출
+            tr_id = "CTCA0903R"  # 국내휴장일조회
+            
+            params = {
+                "BASS_DT": f"{year}0101",  # 기준일자 (연도 시작)
+                "CTX_AREA_NK": "",
+                "CTX_AREA_FK": ""
+            }
+            
+            result = self._call_kis_api("/uapi/domestic-stock/v1/quotations/chk-holiday", 
+                                       tr_id, params, method="GET")
+            
+            holidays = set()
+            output_list = result.get('output', [])
+            
+            for item in output_list:
+                holiday_date = item.get('bass_dt', '')
+                if holiday_date and len(holiday_date) == 8:
+                    # YYYYMMDD -> YYYY-MM-DD 변환
+                    formatted_date = f"{holiday_date[:4]}-{holiday_date[4:6]}-{holiday_date[6:8]}"
+                    holidays.add(formatted_date)
+            
+            logger.info(f"Fetched {len(holidays)} holidays for year {year}")
+            return holidays
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch holidays for {year}: {e}")
+            # 실패시 빈 세트 반환 (fallback 로직이 처리)
+            return set()
     
     def _get_tr_id(self, action: str, force_session: str = None) -> str:
         """
@@ -940,7 +1074,7 @@ class KisBroker:
         """해외주식 매수 주문"""
         excg_cd = self._get_exchange_code(symbol)
         tr_id = "VTTT1002U" if self.is_virtual else "TTTT1002U"
-        
+
         params = {
             "CANO": self.auth.account_number,
             "ACNT_PRDT_CD": self.auth.account_product,
@@ -1126,14 +1260,41 @@ class KisBroker:
             except Exception:
                 continue  # 다음 거래소 시도
         
+        logger.warning(f"Order {order_id} not found in any major exchange")
         return None
     
     def _get_exchange_code(self, symbol: str) -> str:
-        """종목 코드로 거래소 코드 추정"""
-        # 간단한 추정 로직 (실제로는 마스터 데이터 참조 필요)
-        if len(symbol) <= 5 and symbol.isalpha():
-            return "NASD"  # 나스닥
-        return "NYSE"  # 뉴욕증권거래소
+        """
+        종목 코드로 거래소 코드 결정
+        
+        Args:
+            symbol: 종목 심볼 (예: AAPL, BRK.A, SPY)
+            
+        Returns:
+            거래소 코드 ("NASD", "NYSE", "AMEX")
+        """
+        if not symbol or not isinstance(symbol, str):
+            logger.warning(f"Invalid symbol: {symbol}, using default NASD")
+            return "NASD"
+        
+        # 심볼 정규화
+        symbol = symbol.strip().upper()
+        
+        # 1단계: 주요 종목 직접 매핑
+        if symbol in self.MAJOR_SYMBOLS_EXCHANGE:
+            exchange = self.MAJOR_SYMBOLS_EXCHANGE[symbol]
+            logger.debug(f"Symbol {symbol} mapped to {exchange} (direct)")
+            return exchange
+        
+        # 2단계: 패턴 매칭
+        for pattern, exchange in self.EXCHANGE_PATTERNS:
+            if re.match(pattern, symbol):
+                logger.debug(f"Symbol {symbol} matched pattern {pattern} -> {exchange}")
+                return exchange
+        
+        # 3단계: 기본값 (NASDAQ이 가장 일반적)
+        logger.debug(f"Symbol {symbol} using default NASD")
+        return "NASD"
 
 #endregion Overseas
     
@@ -1202,14 +1363,20 @@ class KisBroker:
         """현재 시장 정보 반환"""
         current_session = self.get_market_session()
         current_time = datetime.now()
+        target_date = current_time.date()
         
         return {
             'current_session': current_session,
             'current_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
             'is_trading_hours': current_session in ['DAY', 'NIGHT'],
+            'is_holiday': self._is_holiday(target_date),
             'account_type': self.account_type,
             'is_virtual': self.is_virtual,
-            'timezone': 'Asia/Seoul'
+            'timezone': 'Asia/Seoul',
+            'holiday_cache_status': {
+                'cached_date': self._holiday_cache_date.isoformat() if self._holiday_cache_date else None,
+                'cache_size': len(self._holiday_cache)
+            }
         }
     
     # ========== 캐시 관리 ==========

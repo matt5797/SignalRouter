@@ -67,6 +67,12 @@ class KisBroker:
         self.default_real_secret = default_real_secret
         self.token_storage_path = token_storage_path
         
+        # 캐시된 데이터 (타임스탬프와 함께)
+        self._cached_balance = None
+        self._cached_positions = None
+        self._cache_timestamp = None
+        self._cache_max_age = 30  # 30초
+
         # 인증 객체 생성
         if is_virtual and default_real_secret:
             self.auth = AuthFactory.create_virtual_with_real_reference(
@@ -84,7 +90,7 @@ class KisBroker:
     @staticmethod
     def get_market_session(target_time: datetime = None) -> str:
         """
-        거래 시간대 판단 (KISS 원칙 적용)
+        거래 시간대 판단
         
         Args:
             target_time: 판단할 시간 (None이면 현재 시간)
@@ -190,59 +196,141 @@ class KisBroker:
                 raise
             raise KisOrderError(f"Sell order execution failed: {e}")
     
-    def get_positions(self) -> List[Dict]:
+    def get_positions(self) -> Dict:
         """보유 포지션 조회"""
         try:
             if self.account_type == "STOCK":
-                return self._stock_positions()
+                positions = self._stock_positions()
             elif self.account_type == "FUTURES":
-                return self._futures_positions()
+                positions = self._futures_positions()
             elif self.account_type == "OVERSEAS":
-                return self._overseas_positions()
+                positions = self._overseas_positions()
             else:
-                return []
+                positions = []
+            
+            # 성공시 캐시 업데이트
+            self._cached_positions = positions
+            self._cache_timestamp = datetime.now()
+            
+            return {
+                'data': positions,
+                'status': 'success',
+                'timestamp': self._cache_timestamp.isoformat(),
+                'cache_age': 0,
+                'error': None
+            }
+            
         except Exception as e:
             logger.error(f"Get positions failed: {e}")
-            return []
+            
+            # 캐시된 데이터 확인
+            if self._cached_positions is not None and self._is_cache_valid():
+                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
+                logger.warning(f"Using cached positions (age: {cache_age:.1f}s)")
+                
+                return {
+                    'data': self._cached_positions,
+                    'status': 'cached',
+                    'timestamp': self._cache_timestamp.isoformat(),
+                    'cache_age': cache_age,
+                    'error': str(e)
+                }
+            
+            # 캐시도 없으면 빈 데이터 + 에러 상태
+            return {
+                'data': [],
+                'status': 'error',
+                'timestamp': datetime.now().isoformat(),
+                'cache_age': None,
+                'error': str(e)
+            }
     
     def get_balance(self) -> Dict:
         """계좌 잔고 조회"""
         try:
             if self.account_type == "STOCK":
-                return self._stock_balance()
+                balance = self._stock_balance()
             elif self.account_type == "FUTURES":
-                return self._futures_balance()
+                balance = self._futures_balance()
             elif self.account_type == "OVERSEAS":
-                return self._overseas_balance()
+                balance = self._overseas_balance()
             else:
-                return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
+                balance = {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
+            
+            # 성공시 캐시 업데이트
+            self._cached_balance = balance
+            self._cache_timestamp = datetime.now()
+            
+            return {
+                'data': balance,
+                'status': 'success',
+                'timestamp': self._cache_timestamp.isoformat(),
+                'cache_age': 0,
+                'error': None
+            }
+            
         except Exception as e:
             logger.error(f"Get balance failed: {e}")
-            return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
+            
+            # 캐시된 데이터 확인
+            if self._cached_balance is not None and self._is_cache_valid():
+                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
+                logger.warning(f"Using cached balance (age: {cache_age:.1f}s)")
+                
+                return {
+                    'data': self._cached_balance,
+                    'status': 'cached',
+                    'timestamp': self._cache_timestamp.isoformat(),
+                    'cache_age': cache_age,
+                    'error': str(e)
+                }
+            
+            # 캐시도 없으면 기본값 + 에러 상태
+            return {
+                'data': {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'},
+                'status': 'error_fallback',
+                'timestamp': datetime.now().isoformat(),
+                'cache_age': None,
+                'error': str(e)
+            }
     
     def get_order_status(self, order_id: str) -> Dict:
         """주문 상태 조회"""
         if not order_id or order_id == 'unknown':
-            return {'status': 'UNKNOWN', 'order_id': order_id, 'error': 'Invalid order ID'}
+            return {
+                'data': {'status': 'INVALID', 'order_id': order_id},
+                'status': 'error',
+                'error': 'Invalid order ID'
+            }
         
         try:
             if self.account_type == "STOCK":
-                return self._stock_order_status(order_id)
+                result = self._stock_order_status(order_id)
             elif self.account_type == "FUTURES":
-                return self._futures_order_status(order_id)
+                result = self._futures_order_status(order_id)
             elif self.account_type == "OVERSEAS":
-                return self._overseas_order_status(order_id)
+                result = self._overseas_order_status(order_id)
             else:
-                return {'status': 'UNKNOWN', 'order_id': order_id, 'error': 'Unsupported account type'}
+                result = {'status': 'UNKNOWN', 'order_id': order_id}
+            
+            return {
+                'data': result,
+                'status': 'success',
+                'error': None
+            }
+            
         except Exception as e:
             logger.error(f"Get order status failed: {e}")
-            return {'status': 'ERROR', 'order_id': order_id, 'error': str(e)}
+            return {
+                'data': {'status': 'ERROR', 'order_id': order_id},
+                'status': 'error',
+                'error': str(e)
+            }
 
     def cancel_order(self, order_id: str) -> bool:
         """주문 취소"""
         if not order_id or order_id == 'unknown':
-            logger.error("Cannot cancel order with invalid ID")
-            return False
+            raise KisOrderError("Cannot cancel order with invalid ID")
         
         try:
             if self.account_type == "STOCK":
@@ -252,30 +340,48 @@ class KisBroker:
             elif self.account_type == "OVERSEAS":
                 return self._overseas_cancel_order(order_id)
             else:
-                logger.error(f"Unsupported account type for cancel: {self.account_type}")
-                return False
+                raise KisAccountTypeError(f"Unsupported account type for cancel: {self.account_type}")
         except Exception as e:
             logger.error(f"Cancel order failed: {e}")
-            return False
+            if isinstance(e, KisApiError):
+                raise
+            raise KisOrderError(f"Cancel order failed: {e}")
     
     def get_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """매수 가능 금액/수량 조회"""
         try:
             if self.account_type == "FUTURES":
-                return self._futures_orderable_amount(symbol, price)
+                result = self._futures_orderable_amount(symbol, price)
             elif self.account_type == "STOCK":
-                return self._stock_orderable_amount(symbol, price)
+                result = self._stock_orderable_amount(symbol, price)
             else:
-                # 기본 구현
-                return {
+                result = {
                     'symbol': symbol,
                     'orderable_quantity': 0,
                     'orderable_amount': 0.0,
                     'unit_price': price or 0.0
                 }
+            
+            return {
+                'data': result,
+                'status': 'success',
+                'error': None
+            }
+            
         except Exception as e:
             logger.error(f"Get orderable amount failed: {e}")
-            return {'symbol': symbol, 'orderable_quantity': 0, 'orderable_amount': 0.0}
+            
+            # 에러시 0 반환하되 상태 명시 (거래 차단 효과)
+            return {
+                'data': {
+                    'symbol': symbol,
+                    'orderable_quantity': 0,
+                    'orderable_amount': 0.0,
+                    'unit_price': price or 0.0
+                },
+                'status': 'error_safe',  # 안전장치 작동 상태
+                'error': str(e)
+            }
     
     def _get_account_type(self) -> str:
         """Secret 파일에서 계좌 타입 판단"""
@@ -823,7 +929,7 @@ class KisBroker:
         
         return success
     
-    # ========== 해외주식 API 구현 (기존과 동일) ==========
+    # ========== 해외주식 API 구현 ==========
     
     def _overseas_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
         """해외주식 매수 주문"""
@@ -1098,3 +1204,25 @@ class KisBroker:
             'is_virtual': self.is_virtual,
             'timezone': 'Asia/Seoul'
         }
+    
+    # ========== 캐시 관리 ==========
+
+    def _is_cache_valid(self) -> bool:
+        """캐시 유효성 확인"""
+        if self._cache_timestamp is None:
+            return False
+        
+        age = (datetime.now() - self._cache_timestamp).total_seconds()
+        return age <= self._cache_max_age
+    
+    def invalidate_cache(self) -> None:
+        """캐시 무효화"""
+        self._cached_balance = None
+        self._cached_positions = None
+        self._cache_timestamp = None
+        logger.debug("Cache invalidated")
+    
+    def force_refresh(self) -> None:
+        """강제 새로고침 (캐시 무시)"""
+        self.invalidate_cache()
+        logger.info("Forced refresh - cache cleared")

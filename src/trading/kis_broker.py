@@ -31,31 +31,31 @@ class KisBroker:
         ('FUTURES', 'DAY', False, 'ORDER'): 'TTTO1101U',    # 실전 주간 주문
         ('FUTURES', 'NIGHT', False, 'ORDER'): 'TTTN1101U',  # 실전 야간 주문
         ('FUTURES', 'DAY', True, 'ORDER'): 'VTTO1101U',     # 모의 주간 주문
-        ('FUTURES', 'NIGHT', True, 'ORDER'): 'VTTN1101U',   # 모의 야간 주문 # 미지원
+        #('FUTURES', 'NIGHT', True, 'ORDER'): 'VTTN1101U',   # 모의 야간 주문 # 미지원
         
         # 선물 정정/취소
         ('FUTURES', 'DAY', False, 'CANCEL'): 'TTTO1103U',   # 실전 주간 정정취소
         ('FUTURES', 'NIGHT', False, 'CANCEL'): 'TTTN1103U', # 실전 야간 정정취소
         ('FUTURES', 'DAY', True, 'CANCEL'): 'VTTO1103U',    # 모의 주간 정정취소
-        ('FUTURES', 'NIGHT', True, 'CANCEL'): 'VTTN1103U',  # 모의 야간 정정취소 # 미지원
+        #('FUTURES', 'NIGHT', True, 'CANCEL'): 'VTTN1103U',  # 모의 야간 정정취소 # 미지원
         
         # 선물 잔고조회
         ('FUTURES', 'DAY', False, 'BALANCE'): 'CTFO6118R',   # 실전 잔고조회
         ('FUTURES', 'DAY', True, 'BALANCE'): 'VTFO6118R',    # 모의 잔고조회
         ('FUTURES', 'NIGHT', False, 'BALANCE'): 'CTFN6118R', # 실전 잔고조회
-        ('FUTURES', 'NIGHT', True, 'BALANCE'): 'VTFN6118R',  # 모의 잔고조회 # 미지원
+        #('FUTURES', 'NIGHT', True, 'BALANCE'): 'VTFN6118R',  # 모의 잔고조회 # 미지원
         
         # 선물 주문체결조회
         ('FUTURES', 'DAY', False, 'INQUIRY'): 'TTTO5201R',   # 실전 주문체결조회
         ('FUTURES', 'DAY', True, 'INQUIRY'): 'VTTO5201R',    # 모의 주문체결조회
         ('FUTURES', 'NIGHT', False, 'INQUIRY'): 'STTN5201R', # 실전 주문체결조회
-        ('FUTURES', 'NIGHT', True, 'INQUIRY'): 'VTTN5201R',  # 모의 주문체결조회 # 미지원
+        #('FUTURES', 'NIGHT', True, 'INQUIRY'): 'VTTN5201R',  # 모의 주문체결조회 # 미지원
         
         # 선물 주문가능조회
         ('FUTURES', 'DAY', False, 'ORDERABLE'): 'TTTO5105R',   # 실전 주문가능조회
         ('FUTURES', 'DAY', True, 'ORDERABLE'): 'VTTO5105R',    # 모의 주문가능조회
         ('FUTURES', 'NIGHT', False, 'ORDERABLE'): 'STTN5105R', # 실전 주문가능조회
-        ('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTN5105R',  # 모의 주문가능조회 # 미지원
+        #('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTN5105R',  # 모의 주문가능조회 # 미지원
     }
     
     def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
@@ -436,6 +436,7 @@ class KisBroker:
             logger.error(f"KIS API call failed: {e}")
             raise KisApiError(f"API call failed: {str(e)}")
     
+#region Stock
     # ========== 주식 API 구현 (기존과 동일) ==========
     
     def _stock_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
@@ -728,7 +729,9 @@ class KisBroker:
                                    tr_id, params, method="GET")
         
         return result.get('output', [])
-    
+#endregion Stock
+
+#region Future
     # ========== 선물 API 구현 (주/야간 구분 적용) ==========
     
     def _futures_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
@@ -928,7 +931,9 @@ class KisBroker:
             logger.info(f"Futures order cancelled: {order_id} (Session: {current_session}, TR: {tr_id})")
         
         return success
+#endregion Future
     
+#region Overseas
     # ========== 해외주식 API 구현 ==========
     
     def _overseas_buy(self, symbol: str, quantity: int, price: Optional[float] = None) -> str:
@@ -1129,6 +1134,8 @@ class KisBroker:
         if len(symbol) <= 5 and symbol.isalpha():
             return "NASD"  # 나스닥
         return "NYSE"  # 뉴욕증권거래소
+
+#endregion Overseas
     
     # ========== 상태 매핑 헬퍼 메서드 ==========
 

@@ -2,9 +2,21 @@
 
 # 데이터베이스 설정
 database:
+  # SQLite (로컬 개발용)
   path: "data/trading.db"
+  
+  # PostgreSQL (운영환경용 - Railway)
+  # 환경변수 DATABASE_URL을 사용하면 자동으로 PostgreSQL 연결
+  postgresql_url: ""  # 환경변수 DATABASE_URL 또는 POSTGRESQL_URL 사용
+  
+  # 백업 설정
   backup_enabled: true
-  backup_interval_hours: 6
+  backup_interval_hours: 48
+  
+  # 연결 풀 설정 (PostgreSQL용)
+  pool_size: 2
+  max_overflow: 10
+  pool_timeout: 30
 
 # 웹훅 서버 설정
 webhook:

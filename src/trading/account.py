@@ -27,11 +27,23 @@ class Account:
         account_id: str, 
         name: str, 
         account_type: AccountType,
-        secret_file_path: str,
+        secret_identifier: str = None,  # 변경: secret_file_path → secret_identifier
         is_virtual: bool = False,
         is_active: bool = True,
         token_storage_path: str = "secrets/tokens/"
     ):
+        """
+        Account 초기화
+        
+        Args:
+            account_id: 계좌 ID
+            name: 계좌 이름
+            account_type: 계좌 타입
+            secret_identifier: 계좌 설정 식별자 (None이면 account_id 사용)
+            is_virtual: 모의투자 여부
+            is_active: 계좌 활성화 여부
+            token_storage_path: 토큰 저장 경로
+        """
         self.account_id = account_id
         self.name = name
         self.account_type = AccountType(account_type) if isinstance(account_type, str) else account_type
@@ -41,7 +53,7 @@ class Account:
         # Broker 인스턴스 생성
         self.broker = KisBroker(
             account_id=account_id, 
-            secret_file_path=secret_file_path, 
+            secret_identifier=secret_identifier or account_id,  # None이면 account_id 사용
             is_virtual=is_virtual,
             token_storage_path=token_storage_path
         )

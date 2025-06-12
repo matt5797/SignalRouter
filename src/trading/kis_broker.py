@@ -115,11 +115,21 @@ class KisBroker:
         (r'^[A-Z]{1,3}$', "NYSE"),             # 1-3글자 (전통적으로 NYSE)
     ]
     
-    def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
-                 default_real_secret: Optional[str] = None, 
-                 token_storage_path: str = "secrets/tokens/"):
+    def __init__(self, account_id: str, secret_identifier: str = None, is_virtual: bool = False, 
+             default_real_secret: Optional[str] = None, 
+             token_storage_path: str = "secrets/tokens/"):
+        """
+        KisBroker 초기화
+        
+        Args:
+            account_id: 계좌 ID
+            secret_identifier: 계좌 설정 식별자 (None이면 account_id 사용)
+            is_virtual: 모의투자 여부
+            default_real_secret: 기본 실전계좌 참조 (모의투자용)
+            token_storage_path: 토큰 저장 경로
+        """
         self.account_id = account_id
-        self.secret_file_path = secret_file_path
+        self.secret_identifier = secret_identifier or account_id  # None이면 account_id 사용
         self.is_virtual = is_virtual
         self.default_real_secret = default_real_secret
         self.token_storage_path = token_storage_path
@@ -133,16 +143,16 @@ class KisBroker:
         # 인증 객체 생성
         if is_virtual and default_real_secret:
             self.auth = AuthFactory.create_virtual_with_real_reference(
-                secret_file_path, default_real_secret, token_storage_path
+                self.secret_identifier, default_real_secret, token_storage_path
             )
         else:
-            self.auth = AuthFactory.create_from_secret(secret_file_path, token_storage_path)
+            self.auth = AuthFactory.create_from_secret(self.secret_identifier, token_storage_path)
         
         # 계좌 타입 및 기본 정보 로드
-        self.secret_data = SecretLoader.load_secret(secret_file_path)
+        self.secret_data = SecretLoader.load_secret(self.secret_identifier)
         self.account_type = self._get_account_type()
         
-        logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
+        logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}, Secret: {self.secret_identifier}")
     
     @staticmethod
     def get_market_session(self, target_time: datetime = None) -> str:

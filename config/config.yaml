@@ -35,26 +35,23 @@ kis_api:
   retry_count: 3
   retry_delay_seconds: 5
 
-# 계좌 설정
+# 계좌 설정 (환경변수 ACCOUNTS_CONFIG를 우선 사용)
 accounts:
   futures_real_01:
     name: "선물 실전 계좌 01"
     type: "FUTURES"
-    secret_file: "secrets/futures_real_01.json"
     is_virtual: false
     is_active: true
   
   stock_virtual_01:
     name: "주식 모의 계좌 01"
     type: "STOCK"
-    secret_file: "secrets/stock_virtual_01.json"
     is_virtual: true
     is_active: true
 
   futures_virtual_01:
     name: "선물 모의 계좌 01"
     type: "FUTURES"
-    secret_file: "secrets/futures_virtual_01.json"
     is_virtual: true
     is_active: true
 

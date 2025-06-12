@@ -170,3 +170,5 @@ data/*.db
 # Logs
 logs/*.log
 !logs/.gitkeep
+
+.env.accounts

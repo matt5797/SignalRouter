@@ -36,31 +36,31 @@ class KisBroker:
         ('FUTURES', 'DAY', False, 'ORDER'): 'TTTO1101U',    # 실전 주간 주문
         ('FUTURES', 'NIGHT', False, 'ORDER'): 'TTTN1101U',  # 실전 야간 주문
         ('FUTURES', 'DAY', True, 'ORDER'): 'VTTO1101U',     # 모의 주간 주문
-        #('FUTURES', 'NIGHT', True, 'ORDER'): 'VTTN1101U',   # 모의 야간 주문 # 미지원
+        ('FUTURES', 'NIGHT', True, 'ORDER'): 'VTTO1101U',   # 모의 야간 주문 # 미지원
         
         # 선물 정정/취소
         ('FUTURES', 'DAY', False, 'CANCEL'): 'TTTO1103U',   # 실전 주간 정정취소
         ('FUTURES', 'NIGHT', False, 'CANCEL'): 'TTTN1103U', # 실전 야간 정정취소
         ('FUTURES', 'DAY', True, 'CANCEL'): 'VTTO1103U',    # 모의 주간 정정취소
-        #('FUTURES', 'NIGHT', True, 'CANCEL'): 'VTTN1103U',  # 모의 야간 정정취소 # 미지원
+        ('FUTURES', 'NIGHT', True, 'CANCEL'): 'VTTO1103U',  # 모의 야간 정정취소 # 미지원
         
         # 선물 잔고조회
         ('FUTURES', 'DAY', False, 'BALANCE'): 'CTFO6118R',   # 실전 잔고조회
         ('FUTURES', 'DAY', True, 'BALANCE'): 'VTFO6118R',    # 모의 잔고조회
         ('FUTURES', 'NIGHT', False, 'BALANCE'): 'CTFN6118R', # 실전 잔고조회
-        #('FUTURES', 'NIGHT', True, 'BALANCE'): 'VTFN6118R',  # 모의 잔고조회 # 미지원
+        ('FUTURES', 'NIGHT', True, 'BALANCE'): 'VTFO6118R',  # 모의 잔고조회 # 미지원
         
         # 선물 주문체결조회
         ('FUTURES', 'DAY', False, 'INQUIRY'): 'TTTO5201R',   # 실전 주문체결조회
         ('FUTURES', 'DAY', True, 'INQUIRY'): 'VTTO5201R',    # 모의 주문체결조회
         ('FUTURES', 'NIGHT', False, 'INQUIRY'): 'STTN5201R', # 실전 주문체결조회
-        #('FUTURES', 'NIGHT', True, 'INQUIRY'): 'VTTN5201R',  # 모의 주문체결조회 # 미지원
+        ('FUTURES', 'NIGHT', True, 'INQUIRY'): 'VTTO5201R',  # 모의 주문체결조회 # 미지원
         
         # 선물 주문가능조회
         ('FUTURES', 'DAY', False, 'ORDERABLE'): 'TTTO5105R',   # 실전 주문가능조회
         ('FUTURES', 'DAY', True, 'ORDERABLE'): 'VTTO5105R',    # 모의 주문가능조회
         ('FUTURES', 'NIGHT', False, 'ORDERABLE'): 'STTN5105R', # 실전 주문가능조회
-        #('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTN5105R',  # 모의 주문가능조회 # 미지원
+        ('FUTURES', 'NIGHT', True, 'ORDERABLE'): 'VTTO5105R',  # 모의 주문가능조회 # 미지원
     }
 
     # 주요 종목별 거래소 매핑 (100개 주요 종목)
@@ -144,7 +144,6 @@ class KisBroker:
         
         logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
     
-    @staticmethod
     def get_market_session(self, target_time: datetime = None) -> str:
         """
         거래 시간대 판단 (휴장일 API 활용)
@@ -193,25 +192,28 @@ class KisBroker:
         Returns:
             True: 휴장일, False: 개장일
         """
-        try:
-            # 캐시 확인 (같은 날짜면 재사용)
-            if (self._holiday_cache_date == target_date and 
-                target_date.isoformat() in self._holiday_cache):
-                return self._holiday_cache[target_date.isoformat()]
+        
+        return False
+
+        # try:
+        #     # 캐시 확인 (같은 날짜면 재사용)
+        #     if (self._holiday_cache_date == target_date and 
+        #         target_date.isoformat() in self._holiday_cache):
+        #         return self._holiday_cache[target_date.isoformat()]
             
-            # 새로운 날짜면 API 호출
-            holidays = self._fetch_holidays(target_date.year)
+        #     # 새로운 날짜면 API 호출
+        #     holidays = self._fetch_holidays(target_date.year)
             
-            # 캐시 업데이트
-            self._holiday_cache_date = target_date
-            is_holiday = target_date.isoformat() in holidays
-            self._holiday_cache[target_date.isoformat()] = is_holiday
+        #     # 캐시 업데이트
+        #     self._holiday_cache_date = target_date
+        #     is_holiday = target_date.isoformat() in holidays
+        #     self._holiday_cache[target_date.isoformat()] = is_holiday
             
-            return is_holiday
+        #     return is_holiday
             
-        except Exception as e:
-            logger.warning(f"Holiday check failed, using fallback: {e}")
-            return False
+        # except Exception as e:
+        #     logger.warning(f"Holiday check failed, using fallback: {e}")
+        #     return False
     
     def _fetch_holidays(self, year: int) -> Set[str]:
         """
@@ -922,11 +924,18 @@ class KisBroker:
             "CANO": self.auth.account_number,
             "ACNT_PRDT_CD": self.auth.account_product,
             "MGNA_DVSN": "01",  # 증거금구분
-            "EXCC_STAT_CD": "1"  # 정산상태코드
+            "EXCC_STAT_CD": "1",  # 정산상태코드
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": ""
         }
         
-        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance", 
-                                   tr_id, params, method="GET")
+        session = self.get_market_session()
+        if session == 'NIGHT':
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance"
+        else:
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        
+        result = self._call_kis_api(url, tr_id, params, method="GET")
         
         output = result.get('output2', {})
         return {
@@ -944,11 +953,18 @@ class KisBroker:
             "CANO": self.auth.account_number,
             "ACNT_PRDT_CD": self.auth.account_product,
             "MGNA_DVSN": "01",
-            "EXCC_STAT_CD": "1"
+            "EXCC_STAT_CD": "1",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": ""
         }
         
-        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance", 
-                                   tr_id, params, method="GET")
+        session = self.get_market_session()
+        if session == 'NIGHT':
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance"
+        else:
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        
+        result = self._call_kis_api(url, tr_id, params, method="GET")
         
         positions = []
         output1 = result.get('output1', [])
@@ -981,7 +997,7 @@ class KisBroker:
             "ORD_DVSN_CD": "01" if price else "02"
         }
         
-        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-psbl-ngt-order", 
+        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-psbl-order", 
                                    tr_id, params, method="GET")
         
         output = result.get('output', {})
@@ -1016,8 +1032,13 @@ class KisBroker:
             "CTX_AREA_NK200": ""
         }
         
-        result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/inquire-ngt-ccnl", 
-                                   tr_id, params, method="GET")
+        session = self.get_market_session()
+        if session == 'NIGHT':
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-ccnl"
+        else:
+            url = "/uapi/domestic-futureoption/v1/trading/inquire-ccnl"
+        
+        result = self._call_kis_api(url, tr_id, params, method="GET")
         
         orders = result.get('output1', [])
         for order in orders:

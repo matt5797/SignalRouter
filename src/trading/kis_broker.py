@@ -275,16 +275,16 @@ class KisBroker:
             
         # 휴장시간 체크
         if session == 'CLOSED' and not force_session:
-            logger.warning("Market is closed. Using NIGHT session as fallback.")
-            session = 'NIGHT'  # 휴장시간에는 야간 TR을 기본값으로 사용
+            logger.warning("Market is closed. Using DAY session as fallback.")
+            session = 'DAY'  # 휴장시간에는 주간 TR을 기본값으로 사용
         
         # TR ID 조회
         key = (self.account_type, session, self.is_virtual, action)
         tr_id = self.TR_MAPPING.get(key)
         
         if not tr_id:
-            # fallback: 야간 TR 사용
-            fallback_key = (self.account_type, 'NIGHT', self.is_virtual, action)
+            # fallback: 주간 TR 사용
+            fallback_key = (self.account_type, 'DAY', self.is_virtual, action)
             tr_id = self.TR_MAPPING.get(fallback_key)
             logger.warning(f"TR ID not found for {key}, using fallback: {tr_id}")
         

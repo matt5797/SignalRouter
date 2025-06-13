@@ -92,16 +92,25 @@ class Account:
     def can_trade(self, amount: float) -> Dict:
         """거래 가능 여부 확인"""
         if not self.is_active:
-            return False
+            return {
+                'can_trade': False,
+                'reason': 'account_inactive'
+            }
         
-        balance = self.get_balance()
-
         try:
-            balance = self.get_balance()  # 실패하면 예외 발생
-            return balance.get('available_balance', 0.0) >= amount
+            balance = self.get_balance()
+            available = balance.get('available_balance', 0)
+
+            return {
+                'can_trade': available >= amount,
+                'reason': 'sufficient_balance' if available >= amount else 'insufficient_balance'
+            }
         except Exception as e:
             logger.error(f"Cannot check trade capability: {e}")
-            return False
+            return {
+                'can_trade': False,
+                'reason': 'balance_check_failed'
+            }
     
     # ========== 포트폴리오 계산 ==========
     

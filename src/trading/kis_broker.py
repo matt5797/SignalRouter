@@ -795,12 +795,16 @@ class KisBroker:
         
         result = self._call_kis_api(url, tr_id, params, method="GET")
         
-        output = result.get('output2', {})
+        output2 = result.get('output2', {})
+        
         return {
-            'total_balance': float(output.get('tot_evlu_amt', 0)),
-            'available_balance': float(output.get('use_psbl_mney', 0)),
+            'total_balance': float(output2.get('prsm_dpast', 0)),      # 추정예탁자산
+            'available_balance': float(output2.get('ord_psbl_tota', 0)), # 주문가능총액
             'currency': 'KRW',
-            'account_type': 'FUTURES'
+            'account_type': 'FUTURES',
+            'deposit_cash': float(output2.get('dnca_cash', 0)),           # 예수금현금
+            'margin_total': float(output2.get('mgna_tota', 0)),           # 증거금총액
+            'withdrawable_amount': float(output2.get('wdrw_psbl_tot_amt', 0))  # 인출가능총금액
         }
     
     def _futures_positions(self) -> List[Dict]:
@@ -828,15 +832,17 @@ class KisBroker:
         output1 = result.get('output1', [])
         
         for item in output1:
-            quantity = int(item.get('btal_qty', 0))
-            if quantity != 0:  # 잔고가 있는 경우만 (+ 또는 -)
+            quantity = int(item.get('cblc_qty', 0))  # 잔고수량
+            if quantity != 0:
                 positions.append({
-                    'symbol': item.get('pdno', ''),
-                    'quantity': quantity,
-                    'avg_price': float(item.get('mkt_mny', 0)),
-                    'current_value': float(item.get('evlu_amt', 0)),
-                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0)),
-                    'account_type': 'FUTURES'
+                    'symbol': item.get('pdno', ''),                    # 상품번호
+                    'quantity': quantity,                              # 잔고수량 
+                    'avg_price': float(item.get('ccld_avg_unpr1', 0)), # 체결평균단가1
+                    'current_value': float(item.get('evlu_amt', 0)),   # 평가금액
+                    'unrealized_pnl': float(item.get('evlu_pfls_amt', 0)), # 평가손익금액
+                    'account_type': 'FUTURES',
+                    'settlement_price': float(item.get('excc_unpr', 0)),    # 정산단가
+                    'liquidation_qty': int(item.get('lqd_psbl_qty', 0))     # 청산가능수량
                 })
         
         return positions
@@ -849,7 +855,6 @@ class KisBroker:
             "CANO": self.auth.account_number,
             "ACNT_PRDT_CD": self.auth.account_product,
             "PDNO": symbol,
-            "PRDT_TYPE_CD": "301",  # 선물옵션
             "SLL_BUY_DVSN_CD": "02",  # 매수
             "UNIT_PRICE": int(price) if price else 0,
             "ORD_DVSN_CD": "01" if price else "02"
@@ -861,9 +866,11 @@ class KisBroker:
         output = result.get('output', {})
         return {
             'symbol': symbol,
-            'orderable_quantity': int(output.get('max_ord_qty', 0)),
-            'orderable_amount': float(output.get('ord_psbl_amt', 0)),
-            'unit_price': float(price or output.get('nw_unpr', 0))
+            'orderable_quantity': int(output.get('ord_psbl_qty', 0)),
+            'orderable_amount': float(output.get('ord_psbl_qty', 0)) * (price or 0),
+            'unit_price': float(price or 0),
+            'total_possible_qty': int(output.get('tot_psbl_qty', 0)),
+            'liquidation_possible_qty': int(output.get('lqd_psbl_qty1', 0))
         }
 
     def _futures_order_status(self, order_id: str) -> Dict:
@@ -930,18 +937,18 @@ class KisBroker:
             "KRX_NMPR_CNDT_CD": "",
             "RMN_QTY_YN": "Y",  # 잔량전부
             "FUOP_ITEM_DVSN_CD": "",
-            "ORD_DVSN_CD": "02"  # 취소시 기본값
+            "ORD_DVSN_CD": "01"  # 취소시 기본값
         }
         
         result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order-rvsecncl", 
                                    tr_id, params)
         
         output = result.get('output', {})
-        success = bool(output.get('odno'))
+        success = bool(output.get('ODNO'))
         
         if success:
             current_session = self.get_market_session()
-            logger.info(f"Futures order cancelled: {order_id} (Session: {current_session}, TR: {tr_id})")
+            logger.info(f"Futures order cancelled: {order_id} (Session: {current_session})")
         
         return success
 #endregion Future

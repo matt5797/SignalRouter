@@ -56,63 +56,24 @@ class ConfigLoader:
     
     def _override_with_env(self, config: Dict) -> None:
         """환경 변수로 설정 덮어쓰기"""
-        # 데이터베이스 설정
-        database_config = config.setdefault('database', {})
-        
-        # Railway 환경변수 지원
-        if db_url := os.getenv('DATABASE_URL'):
-            database_config['postgresql_url'] = db_url
-        elif db_url := os.getenv('POSTGRESQL_URL'):
-            database_config['postgresql_url'] = db_url
-        elif db_url := os.getenv('POSTGRES_URL'):
-            database_config['postgresql_url'] = db_url
-        
-        # SQLite 경로 (로컬 개발용)
+        # 데이터베이스 경로
         if db_path := os.getenv('DB_PATH'):
-            database_config['path'] = db_path
+            config['database']['path'] = db_path
         
         # 웹훅 설정
-        webhook_config = config.setdefault('webhook', {})
         if webhook_port := os.getenv('WEBHOOK_PORT'):
-            webhook_config['port'] = int(webhook_port)
-        if webhook_host := os.getenv('WEBHOOK_HOST'):
-            webhook_config['host'] = webhook_host
-        if secret_key := os.getenv('SECRET_KEY'):
-            webhook_config['secret_key'] = secret_key
+            config['webhook']['port'] = int(webhook_port)
         
-        # Railway는 PORT 환경변수를 제공
-        if port := os.getenv('PORT'):
-            webhook_config['port'] = int(port)
+        if secret_key := os.getenv('SECRET_KEY'):
+            config['webhook']['secret_key'] = secret_key
     
     def get_database_config(self) -> Dict[str, Any]:
         """데이터베이스 설정 반환"""
-        db_config = self._config.get('database', {})
-        
-        # 환경변수 재확인 (실행시 변경될 수 있음)
-        if db_url := os.getenv('DATABASE_URL'):
-            db_config['postgresql_url'] = db_url
-        
-        return db_config
-    
-    def is_postgresql_enabled(self) -> bool:
-        """PostgreSQL 사용 여부 확인"""
-        db_config = self.get_database_config()
-        return bool(
-            db_config.get('postgresql_url') or
-            os.getenv('DATABASE_URL') or
-            os.getenv('POSTGRESQL_URL') or
-            os.getenv('POSTGRES_URL')
-        )
+        return self._config.get('database', {})
     
     def get_webhook_config(self) -> Dict[str, Any]:
         """웹훅 서버 설정 반환"""
-        webhook_config = self._config.get('webhook', {})
-        
-        # Railway PORT 환경변수 재확인
-        if port := os.getenv('PORT'):
-            webhook_config['port'] = int(port)
-        
-        return webhook_config
+        return self._config.get('webhook', {})
     
     def get_account_config(self, account_id: str) -> Optional[AccountConfig]:
         """계좌 설정 반환"""
@@ -198,18 +159,3 @@ class ConfigLoader:
             return value
         except (KeyError, TypeError):
             return default
-    
-    def get_deployment_info(self) -> Dict[str, Any]:
-        """배포 환경 정보 반환"""
-        return {
-            'database_type': 'postgresql' if self.is_postgresql_enabled() else 'sqlite',
-            'database_url_set': bool(os.getenv('DATABASE_URL')),
-            'port': os.getenv('PORT'),
-            'railway_environment': bool(os.getenv('RAILWAY_ENVIRONMENT')),
-            'heroku_app_name': os.getenv('HEROKU_APP_NAME'),
-            'webhook_config': self.get_webhook_config(),
-            'database_config': {
-                'postgresql_enabled': self.is_postgresql_enabled(),
-                'sqlite_path': self.get_database_config().get('path', 'data/trading.db')
-            }
-        }

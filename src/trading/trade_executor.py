@@ -44,17 +44,7 @@ class TradeExecutor:
             if not strategy_config:
                 return self._error_result(
                     'validation', 
-                    f"Strategy not found for token: {signal_data.get('webhook_token')}",
-                    {'webhook_token': signal_data.get('webhook_token')}
-                )
-            
-            # 2. 데이터 신뢰성 검증
-            reliability_check = self._check_data_reliability(account)
-            if not reliability_check['reliable']:
-                return self._error_result(
-                    'data_reliability',
-                    f"Data reliability check failed: {reliability_check['reason']}",
-                    reliability_check
+                    f"Strategy not found for token: {signal_data.get('webhook_token')}"
                 )
             
             # 3. 포지션 전환 타입 결정
@@ -94,16 +84,14 @@ class TradeExecutor:
             else:
                 return self._error_result(
                     'broker',
-                    f"Order execution failed: {execution_result.get('error', 'Unknown error')}",
-                    execution_result
+                    f"Order execution failed: {execution_result.get('error', 'Unknown error')}"
                 )
             
         except Exception as e:
             logger.error(f"Signal execution failed: {e}")
             return self._error_result(
                 'system',
-                f"System error during signal execution: {str(e)}",
-                {'exception_type': type(e).__name__}
+                f"System error during signal execution: {str(e)}"
             )
     
     def place_order(self, account: Account, order_data: Dict) -> Dict:
@@ -149,26 +137,15 @@ class TradeExecutor:
         
         while time.time() - start_time < timeout_seconds:
             try:
-                status_result = account.broker.get_order_status(order_id)
+                status = account.broker.get_order_status(order_id)
+                last_status = status
                 
-                if status_result.get('status') == 'success':
-                    status = status_result['data']
-                    last_status = status
-                    
-                    if status['status'] == 'FILLED':
-                        logger.info(f"Order filled: {order_id}")
-                        return True, status
-                    elif status['status'] in ['FAILED', 'REJECTED', 'CANCELLED']:
-                        logger.error(f"Order failed: {order_id} - {status['status']}")
-                        return False, status
-                else:
-                    # API 에러인 경우 일정 시간 더 대기
-                    logger.warning(f"Order status check failed: {status_result.get('error')}")
-                    last_status = {
-                        'status': 'UNKNOWN',
-                        'order_id': order_id,
-                        'error': status_result.get('error')
-                    }
+                if status['status'] == 'FILLED':
+                    logger.info(f"Order filled: {order_id}")
+                    return True, status
+                elif status['status'] in ['FAILED', 'REJECTED', 'CANCELLED']:
+                    logger.error(f"Order failed: {order_id} - {status['status']}")
+                    return False, status
                 
                 time.sleep(2)
                 
@@ -180,47 +157,6 @@ class TradeExecutor:
         return False, last_status
     
     # ========== 리스크 체크 ==========
-    
-    def _check_data_reliability(self, account: Account) -> Dict:
-        """데이터 신뢰성 검증"""
-        try:
-            # 계좌 활성화 상태
-            if not account.is_active:
-                return {
-                    'reliable': False,
-                    'reason': 'account_inactive',
-                    'details': {'account_id': account.account_id}
-                }
-            
-            # 잔고 데이터 신뢰성
-            if not account.is_balance_reliable():
-                return {
-                    'reliable': False,
-                    'reason': 'unreliable_balance_data',
-                    'details': account.get_data_health()
-                }
-            
-            # 데이터 신선도 (5분 이상 오래된 캐시는 거부)
-            if account.is_data_stale(max_age_seconds=300):
-                return {
-                    'reliable': False,
-                    'reason': 'stale_data',
-                    'details': account.get_data_health()
-                }
-            
-            return {
-                'reliable': True,
-                'reason': 'all_checks_passed',
-                'details': account.get_data_health()
-            }
-            
-        except Exception as e:
-            logger.error(f"Data reliability check failed: {e}")
-            return {
-                'reliable': False,
-                'reason': 'reliability_check_error',
-                'details': {'error': str(e)}
-            }
     
     def _check_all_risks(self, account: Account, trade_order: TradeOrder, strategy_config: Dict) -> Dict:
         """
@@ -315,27 +251,13 @@ class TradeExecutor:
     def check_position_limit(self, account: Account, symbol: str, amount: float) -> Dict:
         """포지션 한도 체크"""
         try:
-            portfolio_value_result = account.get_total_portfolio_value()
+            portfolio_value = account.get_total_portfolio_value()
             
-            if not portfolio_value_result['reliable']:
-                return {
-                    'approved': False,
-                    'reason': 'unreliable_portfolio_data',
-                    'portfolio_reliable': False,
-                    'details': portfolio_value_result
-                }
-            
-            portfolio_value = portfolio_value_result['total_value']
             if portfolio_value <= 0:
-                return {
-                    'approved': False,
-                    'reason': 'zero_portfolio_value',
-                    'portfolio_value': portfolio_value,
-                    'portfolio_reliable': True
-                }
+                return {'approved': False, 'reason': 'zero_portfolio_value'}
             
             position_ratio = amount / portfolio_value
-            max_ratio = 1  # 기본 100% 제한
+            max_ratio = 1.0  # 기본 100% 제한
             
             approved = position_ratio <= max_ratio
             
@@ -343,18 +265,14 @@ class TradeExecutor:
                 'approved': approved,
                 'reason': 'position_limit_ok' if approved else 'position_limit_exceeded',
                 'position_ratio': position_ratio,
-                'max_ratio': max_ratio,
-                'amount': amount,
-                'portfolio_value': portfolio_value,
-                'portfolio_reliable': True
+                'max_ratio': max_ratio
             }
             
         except Exception as e:
             logger.error(f"Position limit check failed: {e}")
             return {
                 'approved': False,
-                'reason': 'position_limit_check_error',
-                'error': str(e)
+                'reason': 'position_limit_check_error'
             }
     
     def check_daily_loss_limit(self, account_id: str, amount: float) -> Dict:
@@ -369,17 +287,15 @@ class TradeExecutor:
                 'approved': approved,
                 'reason': 'daily_loss_ok' if approved else 'daily_loss_limit_exceeded',
                 'daily_pnl': daily_pnl,
-                'max_loss': max_loss,
-                'remaining_loss_budget': max_loss - daily_pnl if approved else 0
+                'max_loss': max_loss
             }
             
         except Exception as e:
             logger.error(f"Daily loss limit check failed: {e}")
-            # 체크 실패 시 거래 허용 (보수적 접근보다는 시스템 안정성 우선)
+            # 체크 실패 시 거래 허용
             return {
                 'approved': True,
-                'reason': 'daily_loss_check_error_allow',
-                'error': str(e)
+                'reason': 'daily_loss_check_error_allow'
             }
     
     # ========== 주문 실행 로직 ==========

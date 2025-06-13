@@ -26,10 +26,6 @@ logger = logging.getLogger(__name__)
 class KisBroker:
     """KIS API 직접 호출 브로커 클래스"""
     
-    # 클래스 변수로 휴장일 캐시 (모든 인스턴스 공유)
-    _holiday_cache = {}
-    _holiday_cache_date = None
-    
     # TR ID 매핑 테이블 (계좌타입, 세션, 실전/모의, 액션)
     TR_MAPPING = {
         # 선물 매수/매도
@@ -124,12 +120,6 @@ class KisBroker:
         self.default_real_secret = default_real_secret
         self.token_storage_path = token_storage_path
         
-        # 캐시된 데이터 (타임스탬프와 함께)
-        self._cached_balance = None
-        self._cached_positions = None
-        self._cache_timestamp = None
-        self._cache_max_age = 30  # 30초
-
         # 인증 객체 생성
         if is_virtual and default_real_secret:
             self.auth = AuthFactory.create_virtual_with_real_reference(
@@ -163,11 +153,6 @@ class KisBroker:
         if target_time.weekday() >= 5:  # 토요일(5), 일요일(6)
             return 'CLOSED'
         
-        # 2단계: 휴장일 체크 (API 활용)
-        target_date = target_time.date()
-        if self._is_holiday(target_date):
-            return 'CLOSED'
-        
         # 3단계: 시간대 체크
         current_time = target_time.time()
         
@@ -181,80 +166,6 @@ class KisBroker:
         
         # 나머지 시간은 휴장
         return 'CLOSED'
-    
-    def _is_holiday(self, target_date: date) -> bool:
-        """
-        휴장일 여부 확인 (API 기반, 일별 캐싱)
-        
-        Args:
-            target_date: 확인할 날짜
-            
-        Returns:
-            True: 휴장일, False: 개장일
-        """
-        
-        return False
-
-        # try:
-        #     # 캐시 확인 (같은 날짜면 재사용)
-        #     if (self._holiday_cache_date == target_date and 
-        #         target_date.isoformat() in self._holiday_cache):
-        #         return self._holiday_cache[target_date.isoformat()]
-            
-        #     # 새로운 날짜면 API 호출
-        #     holidays = self._fetch_holidays(target_date.year)
-            
-        #     # 캐시 업데이트
-        #     self._holiday_cache_date = target_date
-        #     is_holiday = target_date.isoformat() in holidays
-        #     self._holiday_cache[target_date.isoformat()] = is_holiday
-            
-        #     return is_holiday
-            
-        # except Exception as e:
-        #     logger.warning(f"Holiday check failed, using fallback: {e}")
-        #     return False
-    
-    def _fetch_holidays(self, year: int) -> Set[str]:
-        """
-        해당 연도의 휴장일 목록 조회 (KIS API 활용)
-        
-        Args:
-            year: 조회할 연도
-            
-        Returns:
-            Set[str]: 휴장일 목록 (YYYY-MM-DD 형식)
-        """
-        try:
-            # 휴장일 조회 API 호출
-            tr_id = "CTCA0903R"  # 국내휴장일조회
-            
-            params = {
-                "BASS_DT": f"{year}0101",  # 기준일자 (연도 시작)
-                "CTX_AREA_NK": "",
-                "CTX_AREA_FK": ""
-            }
-            
-            result = self._call_kis_api("/uapi/domestic-stock/v1/quotations/chk-holiday", 
-                                       tr_id, params, method="GET")
-            
-            holidays = set()
-            output_list = result.get('output', [])
-            
-            for item in output_list:
-                holiday_date = item.get('bass_dt', '')
-                if holiday_date and len(holiday_date) == 8:
-                    # YYYYMMDD -> YYYY-MM-DD 변환
-                    formatted_date = f"{holiday_date[:4]}-{holiday_date[4:6]}-{holiday_date[6:8]}"
-                    holidays.add(formatted_date)
-            
-            logger.info(f"Fetched {len(holidays)} holidays for year {year}")
-            return holidays
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch holidays for {year}: {e}")
-            # 실패시 빈 세트 반환 (fallback 로직이 처리)
-            return set()
     
     def _get_tr_id(self, action: str, force_session: str = None) -> str:
         """
@@ -332,112 +243,40 @@ class KisBroker:
                 raise
             raise KisOrderError(f"Sell order execution failed: {e}")
     
-    def get_positions(self) -> Dict:
+    def get_positions(self) -> List[Dict]:
         """보유 포지션 조회"""
         try:
             if self.account_type == "STOCK":
-                positions = self._stock_positions()
+                return self._stock_positions()
             elif self.account_type == "FUTURES":
-                positions = self._futures_positions()
+                return self._futures_positions()
             elif self.account_type == "OVERSEAS":
-                positions = self._overseas_positions()
+                return self._overseas_positions()
             else:
-                positions = []
-            
-            # 성공시 캐시 업데이트
-            self._cached_positions = positions
-            self._cache_timestamp = datetime.now()
-            
-            return {
-                'data': positions,
-                'status': 'success',
-                'timestamp': self._cache_timestamp.isoformat(),
-                'cache_age': 0,
-                'error': None
-            }
+                return []
             
         except Exception as e:
             logger.error(f"Get positions failed: {e}")
-            
-            # 캐시된 데이터 확인
-            if self._cached_positions is not None and self._is_cache_valid():
-                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
-                logger.warning(f"Using cached positions (age: {cache_age:.1f}s)")
-                
-                return {
-                    'data': self._cached_positions,
-                    'status': 'cached',
-                    'timestamp': self._cache_timestamp.isoformat(),
-                    'cache_age': cache_age,
-                    'error': str(e)
-                }
-            
-            # 캐시도 없으면 빈 데이터 + 에러 상태
-            return {
-                'data': [],
-                'status': 'error',
-                'timestamp': datetime.now().isoformat(),
-                'cache_age': None,
-                'error': str(e)
-            }
     
     def get_balance(self) -> Dict:
         """계좌 잔고 조회"""
         try:
             if self.account_type == "STOCK":
-                balance = self._stock_balance()
+                return self._stock_balance()
             elif self.account_type == "FUTURES":
-                balance = self._futures_balance()
+                return self._futures_balance()
             elif self.account_type == "OVERSEAS":
-                balance = self._overseas_balance()
+                return self._overseas_balance()
             else:
-                balance = {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
-            
-            # 성공시 캐시 업데이트
-            self._cached_balance = balance
-            self._cache_timestamp = datetime.now()
-            
-            return {
-                'data': balance,
-                'status': 'success',
-                'timestamp': self._cache_timestamp.isoformat(),
-                'cache_age': 0,
-                'error': None
-            }
+                return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
             
         except Exception as e:
             logger.error(f"Get balance failed: {e}")
-            
-            # 캐시된 데이터 확인
-            if self._cached_balance is not None and self._is_cache_valid():
-                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
-                logger.warning(f"Using cached balance (age: {cache_age:.1f}s)")
-                
-                return {
-                    'data': self._cached_balance,
-                    'status': 'cached',
-                    'timestamp': self._cache_timestamp.isoformat(),
-                    'cache_age': cache_age,
-                    'error': str(e)
-                }
-            
-            # 캐시도 없으면 기본값 + 에러 상태
-            return {
-                'data': {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'},
-                'status': 'error_fallback',
-                'timestamp': datetime.now().isoformat(),
-                'cache_age': None,
-                'error': str(e)
-            }
     
     def get_order_status(self, order_id: str) -> Dict:
         """주문 상태 조회"""
         if not order_id or order_id == 'unknown':
-            return {
-                'data': {'status': 'INVALID', 'order_id': order_id},
-                'status': 'error',
-                'error': 'Invalid order ID'
-            }
+            raise KisOrderError("Invalid order ID")
         
         try:
             if self.account_type == "STOCK":
@@ -449,19 +288,10 @@ class KisBroker:
             else:
                 result = {'status': 'UNKNOWN', 'order_id': order_id}
             
-            return {
-                'data': result,
-                'status': 'success',
-                'error': None
-            }
+            return result
             
         except Exception as e:
             logger.error(f"Get order status failed: {e}")
-            return {
-                'data': {'status': 'ERROR', 'order_id': order_id},
-                'status': 'error',
-                'error': str(e)
-            }
 
     def cancel_order(self, order_id: str) -> bool:
         """주문 취소"""
@@ -479,9 +309,6 @@ class KisBroker:
                 raise KisAccountTypeError(f"Unsupported account type for cancel: {self.account_type}")
         except Exception as e:
             logger.error(f"Cancel order failed: {e}")
-            if isinstance(e, KisApiError):
-                raise
-            raise KisOrderError(f"Cancel order failed: {e}")
     
     def get_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """매수 가능 금액/수량 조회"""
@@ -498,26 +325,10 @@ class KisBroker:
                     'unit_price': price or 0.0
                 }
             
-            return {
-                'data': result,
-                'status': 'success',
-                'error': None
-            }
+            return result
             
         except Exception as e:
             logger.error(f"Get orderable amount failed: {e}")
-            
-            # 에러시 0 반환하되 상태 명시 (거래 차단 효과)
-            return {
-                'data': {
-                    'symbol': symbol,
-                    'orderable_quantity': 0,
-                    'orderable_amount': 0.0,
-                    'unit_price': price or 0.0
-                },
-                'status': 'error_safe',  # 안전장치 작동 상태
-                'error': str(e)
-            }
     
     def _get_account_type(self) -> str:
         """Secret 파일에서 계좌 타입 판단"""
@@ -526,8 +337,8 @@ class KisBroker:
             return account_type
         
         # 계좌번호나 기타 정보로 추정 (fallback)
-        account_num = self.secret_data.get('account_number', '')
-        if account_num.startswith('5'):  # 선물계좌는 보통 5로 시작
+        account_num = self.secret_data.get('account_product', '')
+        if account_num.startswith('03'):  # 선물계좌는 03
             return 'FUTURES'
         else:
             return 'STOCK'  # 기본값
@@ -1393,31 +1204,6 @@ class KisBroker:
             'is_holiday': self._is_holiday(target_date),
             'account_type': self.account_type,
             'is_virtual': self.is_virtual,
-            'timezone': 'Asia/Seoul',
-            'holiday_cache_status': {
-                'cached_date': self._holiday_cache_date.isoformat() if self._holiday_cache_date else None,
-                'cache_size': len(self._holiday_cache)
-            }
+            'timezone': 'Asia/Seoul'
         }
     
-    # ========== 캐시 관리 ==========
-
-    def _is_cache_valid(self) -> bool:
-        """캐시 유효성 확인"""
-        if self._cache_timestamp is None:
-            return False
-        
-        age = (datetime.now() - self._cache_timestamp).total_seconds()
-        return age <= self._cache_max_age
-    
-    def invalidate_cache(self) -> None:
-        """캐시 무효화"""
-        self._cached_balance = None
-        self._cached_positions = None
-        self._cache_timestamp = None
-        logger.debug("Cache invalidated")
-    
-    def force_refresh(self) -> None:
-        """강제 새로고침 (캐시 무시)"""
-        self.invalidate_cache()
-        logger.info("Forced refresh - cache cleared")

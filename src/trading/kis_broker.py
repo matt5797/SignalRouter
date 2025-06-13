@@ -120,6 +120,8 @@ class KisBroker:
         self.default_real_secret = default_real_secret
         self.token_storage_path = token_storage_path
         
+        self._cache = {}
+        
         # 인증 객체 생성
         if is_virtual and default_real_secret:
             self.auth = AuthFactory.create_virtual_with_real_reference(
@@ -133,6 +135,20 @@ class KisBroker:
         self.account_type = self._get_account_type()
         
         logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
+    
+    def _get_cached_or_fetch(self, cache_key: str, fetch_func, ttl: int = 30):
+        """캐시 확인 후 없으면 실행"""
+        import time
+        now = time.time()
+        
+        if cache_key in self._cache:
+            data, expires = self._cache[cache_key]
+            if now < expires:
+                return data
+        
+        result = fetch_func()
+        self._cache[cache_key] = (result, now + ttl)
+        return result
     
     def get_market_session(self, target_time: datetime = None) -> str:
         """
@@ -247,11 +263,23 @@ class KisBroker:
         """보유 포지션 조회"""
         try:
             if self.account_type == "STOCK":
-                return self._stock_positions()
+                return self._get_cached_or_fetch(
+                    f"positions_{self.account_id}", 
+                    self._stock_positions,
+                    ttl=60
+                )
             elif self.account_type == "FUTURES":
-                return self._futures_positions()
+                return self._get_cached_or_fetch(
+                    f"positions_{self.account_id}", 
+                    self._futures_positions,
+                    ttl=60
+                )
             elif self.account_type == "OVERSEAS":
-                return self._overseas_positions()
+                return self._get_cached_or_fetch(
+                    f"positions_{self.account_id}", 
+                    self._overseas_positions,
+                    ttl=60
+                )
             else:
                 return []
             
@@ -262,11 +290,23 @@ class KisBroker:
         """계좌 잔고 조회"""
         try:
             if self.account_type == "STOCK":
-                return self._stock_balance()
+                return self._get_cached_or_fetch(
+                    f"balance_{self.account_id}",
+                    self._stock_balance,
+                    ttl=30
+                )
             elif self.account_type == "FUTURES":
-                return self._futures_balance()
+                return self._get_cached_or_fetch(
+                    f"balance_{self.account_id}",
+                    self._futures_balance,
+                    ttl=30
+                )
             elif self.account_type == "OVERSEAS":
-                return self._overseas_balance()
+                return self._get_cached_or_fetch(
+                    f"balance_{self.account_id}",
+                    self._overseas_balance,
+                    ttl=30
+                )
             else:
                 return {'total_balance': 0.0, 'available_balance': 0.0, 'currency': 'KRW'}
             
@@ -312,21 +352,28 @@ class KisBroker:
     
     def get_orderable_amount(self, symbol: str, price: Optional[float] = None) -> Dict:
         """매수 가능 금액/수량 조회"""
+        cache_key = f"orderable_{self.account_id}_{symbol}_{price}"
+        
         try:
             if self.account_type == "FUTURES":
-                result = self._futures_orderable_amount(symbol, price)
+                return self._get_cached_or_fetch(
+                    cache_key,
+                    lambda: self._futures_orderable_amount(symbol, price),
+                    ttl=10
+                )
             elif self.account_type == "STOCK":
-                result = self._stock_orderable_amount(symbol, price)
+                return self._get_cached_or_fetch(
+                    cache_key,
+                    lambda: self._stock_orderable_amount(symbol, price),
+                    ttl=10
+                )
             else:
-                result = {
+                return {
                     'symbol': symbol,
                     'orderable_quantity': 0,
                     'orderable_amount': 0.0,
                     'unit_price': price or 0.0
                 }
-            
-            return result
-            
         except Exception as e:
             logger.error(f"Get orderable amount failed: {e}")
     
@@ -1195,13 +1242,11 @@ class KisBroker:
         """현재 시장 정보 반환"""
         current_session = self.get_market_session()
         current_time = datetime.now()
-        target_date = current_time.date()
         
         return {
             'current_session': current_session,
             'current_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
             'is_trading_hours': current_session in ['DAY', 'NIGHT'],
-            'is_holiday': self._is_holiday(target_date),
             'account_type': self.account_type,
             'is_virtual': self.is_virtual,
             'timezone': 'Asia/Seoul'

@@ -416,7 +416,7 @@ class AutoTrader:
                     account_id=config.account_id,
                     name=config.name,
                     account_type=AccountType(config.type),
-                    secret_identifier=config.account_id,
+                    secret_file_path=config.secret_file,
                     is_virtual=config.is_virtual,
                     is_active=config.is_active,
                     token_storage_path=token_storage_path
@@ -431,7 +431,7 @@ class AutoTrader:
                     'config': {
                         'name': config.name,
                         'type': config.type,
-                        'is_virtual': config.is_virtual
+                        'secret_file': config.secret_file
                     }
                 }
                 load_errors.append(error_info)

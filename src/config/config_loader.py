@@ -15,6 +15,7 @@ class AccountConfig:
     account_id: str
     name: str
     type: str
+    secret_file: str
     is_virtual: bool
     is_active: bool
 
@@ -124,6 +125,7 @@ class ConfigLoader:
             account_id=account_id,
             name=account_data['name'],
             type=account_data['type'],
+            secret_file=account_data['secret_file'],
             is_virtual=account_data['is_virtual'],
             is_active=account_data['is_active']
         )
@@ -202,7 +204,6 @@ class ConfigLoader:
         return {
             'database_type': 'postgresql' if self.is_postgresql_enabled() else 'sqlite',
             'database_url_set': bool(os.getenv('DATABASE_URL')),
-            'accounts_config_set': bool(os.getenv('ACCOUNTS_CONFIG')),
             'port': os.getenv('PORT'),
             'railway_environment': bool(os.getenv('RAILWAY_ENVIRONMENT')),
             'heroku_app_name': os.getenv('HEROKU_APP_NAME'),

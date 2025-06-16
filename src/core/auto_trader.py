@@ -24,7 +24,7 @@ class AutoTrader:
         
         # 핵심 컴포넌트 초기화
         self.position_manager = PositionManager(self.db)
-        self.trade_executor = TradeExecutor(self.db)
+        self.trade_executor = TradeExecutor(self.db, self.config)
         
         # 계좌 로드 및 초기화
         self.accounts = self._load_accounts()

@@ -114,7 +114,7 @@ class Account:
     
     # ========== 포트폴리오 계산 ==========
     
-    def get_total_portfolio_value(self) -> Dict:
+    def get_total_portfolio_value(self) -> float:
         """총 포트폴리오 가치"""
         balance = self.get_balance()
         positions = self.get_positions()
@@ -124,7 +124,7 @@ class Account:
         
         return cash_value + position_value
     
-    def get_total_unrealized_pnl(self) -> Dict:
+    def get_total_unrealized_pnl(self) -> float:
         """총 미실현 손익"""
         positions = self.get_positions()
         return sum(pos.get('unrealized_pnl', 0.0) for pos in positions)

@@ -8,6 +8,7 @@ from typing import Dict, Optional, Tuple
 from datetime import datetime, date
 import logging
 from ..database import TradingDB
+from ..config import ConfigLoader
 from ..models import TradeOrder, TransitionType, TradeStatus
 from .account import Account
 from .exceptions import TradingError, AccountError, RiskManagementError
@@ -18,8 +19,9 @@ logger = logging.getLogger(__name__)
 class TradeExecutor:
     """주문 실행 및 리스크 관리 클래스"""
     
-    def __init__(self, db: TradingDB):
+    def __init__(self, db: TradingDB, config: ConfigLoader = None):
         self.db = db
+        self.config = config
         logger.info("TradeExecutor initialized")
     
     # ========== 메인 실행 로직 ==========
@@ -40,21 +42,27 @@ class TradeExecutor:
         """
         try:
             # 1. 전략 설정 조회
-            strategy_config = self.db.get_strategy_by_token(signal_data.get('webhook_token', ''))
+            if not self.config:
+                return self._error_result(
+                    'system', 
+                    "ConfigLoader not available for strategy lookup"
+                )
+            
+            strategy_config = self.config.get_strategy_by_token(signal_data.get('webhook_token', ''))
             if not strategy_config:
                 return self._error_result(
                     'validation', 
                     f"Strategy not found for token: {signal_data.get('webhook_token')}"
                 )
             
-            # 3. 포지션 전환 타입 결정
+            # 2. 포지션 전환 타입 결정
             current_position = self.db.get_position(account.account_id, signal_data['symbol'])
             transition_type = self._calculate_transition_type(current_position, signal_data)
             
-            # 4. 주문 생성
+            # 3. 주문 생성
             trade_order = TradeOrder.from_signal(signal_data, account.account_id, transition_type)
             
-            # 5. 리스크 체크
+            # 4. 리스크 체크
             risk_check = self._check_all_risks(account, trade_order, strategy_config)
             if not risk_check['approved']:
                 return self._error_result(
@@ -63,7 +71,7 @@ class TradeExecutor:
                     risk_check
                 )
             
-            # 6. 주문 실행
+            # 5. 주문 실행
             execution_result = self._execute_trade_order(account, trade_order, strategy_config)
             
             if execution_result['success']:
@@ -158,7 +166,7 @@ class TradeExecutor:
     
     # ========== 리스크 체크 ==========
     
-    def _check_all_risks(self, account: Account, trade_order: TradeOrder, strategy_config: Dict) -> Dict:
+    def _check_all_risks(self, account: Account, trade_order: TradeOrder, strategy_config) -> Dict:
         """
         모든 리스크 체크
         
@@ -188,20 +196,11 @@ class TradeExecutor:
             if estimated_amount > 0:
                 trade_check = account.can_trade(estimated_amount)
                 checks['sufficient_balance'] = trade_check['can_trade']
-                checks['balance_reliable'] = trade_check['reliable']
-                
-                if not trade_check['reliable']:
-                    return {
-                        'approved': False,
-                        'reason': 'unreliable_balance_for_trading',
-                        'checks': checks,
-                        'details': trade_check
-                    }
                 
                 if not trade_check['can_trade']:
                     return {
                         'approved': False,
-                        'reason': trade_check['reason'],
+                        'reason': trade_check.get('reason', 'insufficient_balance'),
                         'checks': checks,
                         'details': trade_check
                     }
@@ -235,7 +234,7 @@ class TradeExecutor:
                 'checks': checks,
                 'details': {
                     'estimated_amount': estimated_amount,
-                    'strategy_id': strategy_config.get('id')
+                    'strategy_name': strategy_config.name if hasattr(strategy_config, 'name') else 'unknown'
                 }
             }
             
@@ -259,20 +258,30 @@ class TradeExecutor:
             position_ratio = amount / portfolio_value
             max_ratio = 1.0  # 기본 100% 제한
             
+            if self.config:
+                # 왜 모든 전략에 대해 검사해서 최소값을 찾는거지? 각 전략의 리스크만 검사해야지
+                all_strategies = self.config.get_all_strategies()
+                for strategy in all_strategies.values():
+                    if strategy.account_id == account.account_id and strategy.is_active:
+                        max_ratio = min(max_ratio, strategy.max_position_ratio)
+            
             approved = position_ratio <= max_ratio
             
             return {
                 'approved': approved,
                 'reason': 'position_limit_ok' if approved else 'position_limit_exceeded',
                 'position_ratio': position_ratio,
-                'max_ratio': max_ratio
+                'max_ratio': max_ratio,
+                'portfolio_value': portfolio_value,
+                'requested_amount': amount
             }
             
         except Exception as e:
             logger.error(f"Position limit check failed: {e}")
             return {
                 'approved': False,
-                'reason': 'position_limit_check_error'
+                'reason': 'position_limit_check_error',
+                'error': str(e)
             }
     
     def check_daily_loss_limit(self, account_id: str, amount: float) -> Dict:
@@ -281,13 +290,21 @@ class TradeExecutor:
             daily_pnl = self.db.get_daily_pnl(account_id, date.today())
             max_loss = -5000000  # 기본 500만원 손실 제한
             
+            if self.config:
+                # 여기도 왜 모든 전략 대상으로 비교하는거지?
+                all_strategies = self.config.get_all_strategies()
+                for strategy in all_strategies.values():
+                    if strategy.account_id == account_id and strategy.is_active:
+                        max_loss = max(max_loss, -strategy.max_daily_loss)  # 음수로 변환
+            
             approved = daily_pnl > max_loss
             
             return {
                 'approved': approved,
                 'reason': 'daily_loss_ok' if approved else 'daily_loss_limit_exceeded',
                 'daily_pnl': daily_pnl,
-                'max_loss': max_loss
+                'max_loss': max_loss,
+                'remaining_loss_allowance': daily_pnl - max_loss
             }
             
         except Exception as e:
@@ -295,17 +312,27 @@ class TradeExecutor:
             # 체크 실패 시 거래 허용
             return {
                 'approved': True,
-                'reason': 'daily_loss_check_error_allow'
+                'reason': 'daily_loss_check_error_allow',
+                'error': str(e)
             }
     
     # ========== 주문 실행 로직 ==========
     
-    def _execute_trade_order(self, account: Account, trade_order: TradeOrder, strategy_config: Dict) -> Dict:
+    def _execute_trade_order(self, account: Account, trade_order: TradeOrder, strategy_config) -> Dict:
         """거래 주문 실행"""
-        # 거래 기록 저장
+        strategy_id = 1  # 기본값
+        if hasattr(strategy_config, 'name'):
+            # 전략 이름으로 DB에서 ID 조회
+            try:
+                db_strategy = self.db.get_strategy_config(strategy_config.name)
+                if db_strategy:
+                    strategy_id = db_strategy.get('id', 1)
+            except Exception as e:
+                logger.warning(f"Could not get strategy ID: {e}")
+        
         trade_data = {
             'account_id': account.account_id,
-            'strategy_id': strategy_config['id'],
+            'strategy_id': strategy_id,
             'symbol': trade_order.symbol,
             'action': trade_order.action,
             'transition_type': trade_order.transition_type.value,
@@ -522,7 +549,7 @@ class TradeExecutor:
         }
     
     def force_close_position(self, account: Account, symbol: str) -> Dict:
-        """강제 포지션 청산 - 에러 처리 개선"""
+        """강제 포지션 청산"""
         try:
             current_position = account.get_position_for_symbol(symbol)
             if current_position['quantity'] == 0:

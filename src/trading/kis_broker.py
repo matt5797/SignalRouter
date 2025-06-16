@@ -640,8 +640,10 @@ class KisBroker:
         orders = result.get('output1', [])
         for order in orders:
             if order.get('odno') == odno:
+                status = self._determine_order_status(order)
+
                 return {
-                    'status': self._map_order_status(order.get('ord_dvsn_name', '')),
+                    'status': status,
                     'order_id': order_id,
                     'symbol': order.get('pdno', ''),
                     'quantity': int(order.get('ord_qty', 0)),
@@ -908,8 +910,10 @@ class KisBroker:
         orders = result.get('output1', [])
         for order in orders:
             if order.get('odno') == order_id:
+                status = self._determine_order_status(order)
+
                 return {
-                    'status': self._map_futures_status(order.get('ord_dvsn_name', '')),
+                    'status': status,
                     'order_id': order_id,
                     'symbol': order.get('pdno', ''),
                     'quantity': int(order.get('ord_qty', 0)),
@@ -1186,28 +1190,39 @@ class KisBroker:
     
     # ========== 상태 매핑 헬퍼 메서드 ==========
 
-    def _map_order_status(self, status_name: str) -> str:
-        """주식 주문 상태 매핑"""
-        status_map = {
-            '접수': 'PENDING',
-            '체결': 'FILLED',
-            '확인': 'CONFIRMED',
-            '거부': 'REJECTED',
-            '취소': 'CANCELLED',
-            '부분체결': 'PARTIAL_FILLED'
-        }
-        return status_map.get(status_name, 'UNKNOWN')
-
-    def _map_futures_status(self, status_name: str) -> str:
-        """선물 주문 상태 매핑"""
-        status_map = {
-            '접수': 'PENDING',
-            '체결': 'FILLED',
-            '거부': 'REJECTED',
-            '취소': 'CANCELLED',
-            '부분체결': 'PARTIAL_FILLED'
-        }
-        return status_map.get(status_name, 'UNKNOWN')
+    def _determine_order_status(self, order_data: Dict) -> str:
+        """주문 데이터로부터 상태 판단"""
+        try:
+            # 필수 필드 추출
+            ord_qty = int(order_data.get('ord_qty', 0))          # 주문수량
+            tot_ccld_qty = int(order_data.get('tot_ccld_qty', 0)) # 총체결수량  
+            rmn_qty = int(order_data.get('rmn_qty', 0))          # 잔여수량
+            rjct_qty = int(order_data.get('rjct_qty', 0))        # 거부수량
+            cncl_yn = order_data.get('cncl_yn', 'N')             # 취소여부
+            cnc_cfrm_qty = int(order_data.get('cnc_cfrm_qty', 0)) # 취소확인수량
+            
+            # 1. 취소된 주문
+            if cncl_yn == 'Y' or cnc_cfrm_qty > 0:
+                return 'CANCELLED'
+            
+            # 2. 거부된 주문 
+            if rjct_qty > 0:
+                return 'REJECTED'
+            
+            # 3. 체결 상태 판단
+            if tot_ccld_qty == 0:
+                # 미체결
+                return 'PENDING'
+            elif tot_ccld_qty >= ord_qty:
+                # 전량체결 (>=로 처리하여 예외 상황 대응)
+                return 'FILLED'  
+            else:
+                # 부분체결 (0 < tot_ccld_qty < ord_qty)
+                return 'PARTIAL_FILLED'
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to determine order status: {e}, data: {order_data}")
+            return 'UNKNOWN'
 
     def _map_overseas_status(self, status_code: str) -> str:
         """해외주식 주문 상태 매핑"""

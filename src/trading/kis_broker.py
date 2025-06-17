@@ -744,9 +744,9 @@ class KisBroker:
             "UNIT_PRICE": str(int(price)) if price else "0",
             "ORD_DVSN_CD": "01" if price else "02"  # 지정가/시장가
         }
-        
+
         result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order", tr_id, params)
-        order_id = result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('ODNO', 'unknown')
         
         current_session = self.get_market_session()
         logger.info(f"Futures buy order placed: {order_id} (Session: {current_session}, TR: {tr_id})")
@@ -769,7 +769,7 @@ class KisBroker:
         }
         
         result = self._call_kis_api("/uapi/domestic-futureoption/v1/trading/order", tr_id, params)
-        order_id = result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('ODNO', 'unknown')
         
         current_session = self.get_market_session()
         logger.info(f"Futures sell order placed: {order_id} (Session: {current_session}, TR: {tr_id})")

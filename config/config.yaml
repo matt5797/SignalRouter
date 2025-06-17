@@ -49,7 +49,7 @@ accounts:
 # 전략별 설정
 strategies:
   FUTURES_MOMENTUM:
-    account_id: "futures_virtual_01"
+    account_id: "futures_real_01"
     webhook_token: "webhook_token_2"
     max_position_ratio: 1
     max_daily_loss: 3000000
@@ -58,6 +58,13 @@ strategies:
   TEST_STRATEGY:
     account_id: "stock_virtual_01"
     webhook_token: "webhook_token_3"
+    max_position_ratio: 1
+    max_daily_loss: 1000000
+    is_active: true
+  
+  FUTURES_TEST:
+    account_id: "futures_virtual_01"
+    webhook_token: "webhook_token_4"
     max_position_ratio: 1
     max_daily_loss: 1000000
     is_active: true

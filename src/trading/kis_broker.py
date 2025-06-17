@@ -266,19 +266,19 @@ class KisBroker:
                 return self._get_cached_or_fetch(
                     f"positions_{self.account_id}", 
                     self._stock_positions,
-                    ttl=60
+                    ttl=20
                 )
             elif self.account_type == "FUTURES":
                 return self._get_cached_or_fetch(
                     f"positions_{self.account_id}", 
                     self._futures_positions,
-                    ttl=60
+                    ttl=20
                 )
             elif self.account_type == "OVERSEAS":
                 return self._get_cached_or_fetch(
                     f"positions_{self.account_id}", 
                     self._overseas_positions,
-                    ttl=60
+                    ttl=20
                 )
             else:
                 return []

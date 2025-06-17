@@ -6,6 +6,7 @@ PositionManager - 포지션 상태 추적 및 관리 클래스
 from typing import Dict, List
 import logging
 from datetime import datetime
+from .account import Account
 from ..database import TradingDB
 from ..models import Position, TransitionType
 
@@ -15,14 +16,15 @@ logger = logging.getLogger(__name__)
 class PositionManager:
     """포지션 상태 추적 및 관리 클래스"""
     
-    def __init__(self, db: TradingDB):
+    def __init__(self, db: TradingDB, accounts: Dict[str, Account]):
         self.db = db
+        self.accounts = accounts
         logger.info("PositionManager initialized")
     
     def get_current_position(self, account_id: str, symbol: str) -> Dict:
         """현재 포지션 조회"""
         try:
-            position_data = self.db.get_position(account_id, symbol)
+            position_data = self.accounts[account_id].get_position_for_symbol(symbol)
             
             # Position 객체로 변환하여 추가 메서드 활용 가능
             if position_data['quantity'] != 0:

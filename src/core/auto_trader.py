@@ -21,14 +21,14 @@ class AutoTrader:
     def __init__(self, config_path: str = "config/config.yaml"):
         self.config = ConfigLoader(config_path)
         self.db = TradingDB(self.config.get_database_config().get('path', 'data/trading.db'))
-        
-        # 핵심 컴포넌트 초기화
-        self.position_manager = PositionManager(self.db)
-        self.trade_executor = TradeExecutor(self.db, self.config)
-        
+                
         # 계좌 로드 및 초기화
         self.accounts = self._load_accounts()
         self._emergency_stop = False
+        
+        # 핵심 컴포넌트 초기화
+        self.position_manager = PositionManager(self.db, self.accounts)
+        self.trade_executor = TradeExecutor(self.db, self.config)
         
         logger.info(f"AutoTrader initialized with {len(self.accounts)} accounts")
     

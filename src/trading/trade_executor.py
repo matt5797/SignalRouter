@@ -56,7 +56,7 @@ class TradeExecutor:
                 )
             
             # 2. 현재 포지션 조회
-            current_position = self.db.get_position(account.account_id, signal_data['symbol'])
+            current_position = account.get_position_for_symbol(signal_data['symbol'])
             
             # 3. 실제 거래 수량 계산
             actual_quantity_result = self._calculate_actual_quantity(

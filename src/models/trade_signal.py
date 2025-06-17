@@ -14,7 +14,7 @@ class TradeSignal:
     strategy: str           # 전략명
     symbol: str            # 종목 코드
     action: str            # BUY/SELL
-    quantity: int          # 수량
+    quantity: int          # 수량 (0 또는 -1이면 전량 처리)
     price: Optional[float] = None    # 가격 (None=시장가)
     timestamp: Optional[datetime] = None
     
@@ -30,7 +30,7 @@ class TradeSignal:
         if self.action not in ['BUY', 'SELL']:
             raise ValueError(f"Invalid action: {self.action}")
         
-        if self.quantity <= 0:
+        if self.quantity < -1:
             raise ValueError(f"Invalid quantity: {self.quantity}")
     
     def is_valid(self) -> bool:
@@ -45,7 +45,7 @@ class TradeSignal:
                 return False
             
             # 수량 유효성
-            if self.quantity <= 0:
+            if self.quantity < -1:
                 return False
             
             # 가격 유효성 (None은 시장가로 허용)
@@ -68,11 +68,15 @@ class TradeSignal:
     @classmethod
     def from_webhook_payload(cls, payload: Dict) -> 'TradeSignal':
         """웹훅 페이로드에서 시그널 생성"""
+        quantity = payload.get('quantity', 0)
+        if quantity is None:
+            quantity = 0
+        
         return cls(
             strategy=payload.get('strategy', ''),
             symbol=payload.get('symbol', ''),
             action=payload.get('action', ''),
-            quantity=int(payload.get('quantity', 0)),
+            quantity=int(quantity),
             price=float(payload['price']) if payload.get('price') else None,
             timestamp=datetime.now()
         )

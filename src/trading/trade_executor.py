@@ -10,7 +10,7 @@ import logging
 from ..database import TradingDB
 from ..config import ConfigLoader
 from ..models import TradeOrder, TransitionType, TradeStatus
-from .account import Account
+from .account import Account, AccountType
 from .exceptions import TradingError, AccountError, RiskManagementError
 
 logger = logging.getLogger(__name__)
@@ -55,14 +55,32 @@ class TradeExecutor:
                     f"Strategy not found for token: {signal_data.get('webhook_token')}"
                 )
             
-            # 2. 포지션 전환 타입 결정
+            # 2. 현재 포지션 조회
             current_position = self.db.get_position(account.account_id, signal_data['symbol'])
+            
+            # 3. 실제 거래 수량 계산
+            actual_quantity_result = self._calculate_actual_quantity(
+                account, signal_data, current_position
+            )
+            
+            if not actual_quantity_result['success']:
+                return self._error_result(
+                    'validation',
+                    actual_quantity_result['message'],
+                    actual_quantity_result
+                )
+            
+            # 실제 수량으로 시그널 데이터 업데이트
+            signal_data = signal_data.copy()
+            signal_data['quantity'] = actual_quantity_result['quantity']
+            
+            # 4. 포지션 전환 타입 결정
             transition_type = self._calculate_transition_type(current_position, signal_data)
             
-            # 3. 주문 생성
+            # 5. 주문 생성
             trade_order = TradeOrder.from_signal(signal_data, account.account_id, transition_type)
             
-            # 4. 리스크 체크
+            # 6. 리스크 체크
             risk_check = self._check_all_risks(account, trade_order, strategy_config)
             if not risk_check['approved']:
                 return self._error_result(
@@ -71,7 +89,7 @@ class TradeExecutor:
                     risk_check
                 )
             
-            # 5. 주문 실행
+            # 7. 주문 실행
             execution_result = self._execute_trade_order(account, trade_order, strategy_config)
             
             if execution_result['success']:
@@ -101,6 +119,133 @@ class TradeExecutor:
                 'system',
                 f"System error during signal execution: {str(e)}"
             )
+    
+    def _calculate_actual_quantity(self, account: Account, signal_data: Dict, current_position: Dict) -> Dict:
+        """
+        실제 거래 수량 계산
+        
+        Returns:
+            Dict: {
+                'success': bool,
+                'quantity': int,
+                'message': str,
+                'is_full_trade': bool
+            }
+        """
+        try:
+            original_quantity = signal_data.get('quantity', 0)
+            action = signal_data.get('action', '').upper()
+            symbol = signal_data.get('symbol', '')
+            current_qty = current_position.get('quantity', 0)
+            
+            # 전량 거래인지 확인 (quantity가 0 또는 -1)
+            is_full_trade = original_quantity in [0, -1]
+            
+            if not is_full_trade:
+                # 명시적 수량이 지정된 경우
+                if original_quantity > 0:
+                    return {
+                        'success': True,
+                        'quantity': original_quantity,
+                        'message': f'Using specified quantity: {original_quantity}',
+                        'is_full_trade': False
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'quantity': 0,
+                        'message': f'Invalid quantity specified: {original_quantity}',
+                        'is_full_trade': False
+                    }
+            
+            if action == 'SELL':
+                if current_qty > 0:
+                    # 롱 포지션 전량 매도
+                    actual_quantity = current_qty
+                elif current_qty < 0:
+                    # 이미 숏 포지션이 있는 경우 - 경고하고 스킵
+                    return {
+                        'success': False,
+                        'quantity': 0,
+                        'message': f'Cannot sell: already in short position ({current_qty})',
+                        'is_full_trade': True
+                    }
+                else:
+                    # 포지션이 없는 경우
+                    if account.account_type == AccountType.FUTURES:
+                        # 선물은 숏 진입 가능 - 기본 수량 사용
+                        actual_quantity = self._get_default_quantity(account, symbol)
+                    else:
+                        return {
+                            'success': False,
+                            'quantity': 0,
+                            'message': f'Cannot sell: no position to close and not futures account',
+                            'is_full_trade': True
+                        }
+            
+            elif action == 'BUY':
+                if current_qty < 0:
+                    # 숏 포지션 전량 청산
+                    actual_quantity = abs(current_qty)
+                elif current_qty > 0:
+                    # 이미 롱 포지션이 있는 경우 - 기본 수량으로 추가 매수
+                    actual_quantity = self._get_default_quantity(account, symbol)
+                else:
+                    # 포지션이 없는 경우 - 기본 수량으로 롱 진입
+                    actual_quantity = self._get_default_quantity(account, symbol)
+            
+            else:
+                return {
+                    'success': False,
+                    'quantity': 0,
+                    'message': f'Invalid action: {action}',
+                    'is_full_trade': True
+                }
+            
+            if actual_quantity <= 0:
+                return {
+                    'success': False,
+                    'quantity': 0,
+                    'message': f'Calculated quantity is zero or negative: {actual_quantity}',
+                    'is_full_trade': True
+                }
+            
+            return {
+                'success': True,
+                'quantity': actual_quantity,
+                'message': f'Full trade quantity calculated: {actual_quantity}',
+                'is_full_trade': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Quantity calculation failed: {e}")
+            return {
+                'success': False,
+                'quantity': 0,
+                'message': f'Quantity calculation error: {str(e)}',
+                'is_full_trade': False
+            }
+    
+    def _get_default_quantity(self, account: Account, symbol: str) -> int:
+        """기본 거래 수량 계산 (전량 거래시 포지션이 없는 경우)"""
+        try:
+            # 매수 가능 금액 조회
+            orderable = account.get_orderable_amount(symbol)
+            orderable_qty = orderable.get('orderable_quantity', 0)
+            
+            if orderable_qty > 0:
+                # 최대 매수가능 수량의 10%를 기본값으로 사용 (리스크 관리)
+                default_qty = max(1, int(orderable_qty * 0.1))
+                logger.debug(f"Default quantity for {symbol}: {default_qty} (10% of {orderable_qty})")
+                return default_qty
+            
+            # 매수가능 수량을 구할 수 없으면 고정값 사용
+            logger.warning(f"Could not determine orderable quantity for {symbol}, using fixed default")
+            return 1  # 최소 1주
+            
+        except Exception as e:
+            logger.error(f"Failed to get default quantity for {symbol}: {e}")
+            return 1  # 안전한 기본값
     
     def place_order(self, account: Account, order_data: Dict) -> Dict:
         """
@@ -522,19 +667,36 @@ class TradeExecutor:
         """포지션 전환 타입 계산"""
         current_qty = current_position.get('quantity', 0)
         signal_action = signal_data['action'].upper()
+        signal_qty = signal_data.get('quantity', 0)
         
+        # 현재 포지션이 없는 경우
         if current_qty == 0:
             return TransitionType.ENTRY
         
+        # 현재 롱 포지션
         if current_qty > 0:
             if signal_action == 'SELL':
-                return TransitionType.EXIT
-            else:
+                if signal_qty >= current_qty:
+                    # 전량 또는 초과 매도 - 청산 또는 역전
+                    return TransitionType.REVERSE if signal_qty > current_qty else TransitionType.EXIT
+                else:
+                    # 부분 매도 - 청산
+                    return TransitionType.EXIT
+            else:  # BUY
+                # 추가 매수 - 진입
                 return TransitionType.ENTRY
-        else:
+        
+        # 현재 숏 포지션
+        else:  # current_qty < 0
             if signal_action == 'BUY':
-                return TransitionType.EXIT
-            else:
+                if signal_qty >= abs(current_qty):
+                    # 전량 또는 초과 매수 - 청산 또는 역전
+                    return TransitionType.REVERSE if signal_qty > abs(current_qty) else TransitionType.EXIT
+                else:
+                    # 부분 매수 - 청산
+                    return TransitionType.EXIT
+            else:  # SELL
+                # 추가 매도 - 진입
                 return TransitionType.ENTRY
     
     def _error_result(self, error_type: str, message: str, details: dict = None) -> Dict:

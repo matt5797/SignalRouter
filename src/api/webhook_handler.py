@@ -113,18 +113,23 @@ class WebhookHandler:
         """시그널 페이로드 파싱 및 검증"""
         try:
             # 필수 필드 확인
-            required_fields = ['strategy', 'symbol', 'action', 'quantity', 'webhook_token']
+            required_fields = ['strategy', 'symbol', 'action', 'webhook_token']
             missing_fields = [field for field in required_fields if field not in payload]
             
             if missing_fields:
                 raise ValueError(f"Missing required fields: {missing_fields}")
+            
+            # quantity 처리 - 없으면 0 (전량거래)
+            quantity = payload.get('quantity', 0)
+            if quantity is None:
+                quantity = 0
             
             # 데이터 타입 변환 및 정규화
             parsed = {
                 'strategy': str(payload['strategy']).strip(),
                 'symbol': str(payload['symbol']).strip().upper(),
                 'action': str(payload['action']).strip().upper(),
-                'quantity': int(payload['quantity']),
+                'quantity': int(quantity),
                 'webhook_token': str(payload['webhook_token']).strip(),
                 'timestamp': datetime.now().isoformat()
             }
@@ -137,9 +142,9 @@ class WebhookHandler:
             if parsed['action'] not in ['BUY', 'SELL']:
                 raise ValueError(f"Invalid action: {parsed['action']}")
             
-            # 수량 검증
-            if parsed['quantity'] <= 0:
-                raise ValueError(f"Invalid quantity: {parsed['quantity']}")
+            # 수량 검증 (0, -1은 전량거래로 허용)
+            if parsed['quantity'] < -1:
+                raise ValueError(f"Invalid quantity: {parsed['quantity']} (must be >= -1)")
             
             return parsed
             

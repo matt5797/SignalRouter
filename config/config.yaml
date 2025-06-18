@@ -66,6 +66,7 @@ strategies:
     account_id: "futures_virtual_01"
     webhook_token: "webhook_token_4"
     max_position_ratio: 1
+    leverage: 10
     max_daily_loss: 1000000
     is_active: true
 
@@ -104,3 +105,31 @@ notifications:
   slack_webhook: ""
   telegram_bot_token: ""
   telegram_chat_id: ""
+
+# 선물 상품 매핑 설정
+futures_mapping:
+  symbol_mapping:
+    USDKRW: "175W"      # 원/달러 선물
+    GOLD: "188W"        # 금 선물
+    KOSPI200: "101W"    # 코스피200 선물
+  
+  multipliers:
+    "175W": 10000       # 원/달러 선물 승수
+    "188W": 100      # 금 선물 승수
+    "101W": 250000      # 코스피200 선물 승수
+  
+  market_codes:
+    "175W": "CF"        # 통화선물
+    "188W": "CF"        # 상품선물
+    "101W": "F"         # 지수선물
+  
+  expiry_rules:
+    "175W":
+      type: "second_thursday"    # 셋째 주 목요일
+      months_ahead: 1          # 1개월 후까지
+    "188W":
+      type: "second_thursday"
+      months_ahead: 1
+    "101W":
+      type: "second_thursday"   # 둘째 주 목요일
+      months_ahead: 3

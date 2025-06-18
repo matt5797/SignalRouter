@@ -113,7 +113,8 @@ class KisBroker:
     
     def __init__(self, account_id: str, secret_file_path: str, is_virtual: bool = False, 
                  default_real_secret: Optional[str] = None, 
-                 token_storage_path: str = "secrets/tokens/"):
+                 token_storage_path: str = "secrets/tokens/",
+                 config_loader=None):
         self.account_id = account_id
         self.secret_file_path = secret_file_path
         self.is_virtual = is_virtual
@@ -133,6 +134,14 @@ class KisBroker:
         # 계좌 타입 및 기본 정보 로드
         self.secret_data = SecretLoader.load_secret(secret_file_path)
         self.account_type = self._get_account_type()
+
+        # 선물 설정 로드
+        self.config_loader = config_loader
+        if config_loader:
+            self.futures_symbol_mapping = config_loader.get_futures_symbol_mapping()
+            self.futures_multipliers = config_loader.get_futures_multipliers()
+            self.futures_market_codes = config_loader.get_futures_market_codes()
+            self.futures_expiry_rules = config_loader.get_futures_expiry_rules()
         
         logger.info(f"KisBroker initialized - Account: {account_id}, Type: {self.account_type}")
     
@@ -955,6 +964,127 @@ class KisBroker:
             logger.info(f"Futures order cancelled: {order_id} (Session: {current_session})")
         
         return success
+    
+    def get_futures_current_price(self, symbol: str) -> float:
+        """
+        선물 실시간 현재가 조회 (범용)
+        
+        Args:
+            symbol: 원본 심볼 ('USDKRW') 또는 월물 코드 ('175W01')
+        
+        Returns:
+            현재가 (실패시 0.0)
+        """
+        try:
+            # 심볼이 월물 코드가 아니면 변환
+            if len(symbol) <= 6 and symbol.upper() in self.futures_symbol_mapping:
+                futures_code = self.convert_symbol_to_futures_code(symbol)
+            else:
+                futures_code = symbol
+            
+            # 기본 코드 추출 (예: '175W01' -> '175W')
+            base_code = futures_code[:4] if len(futures_code) >= 4 else futures_code
+            market_code = self.futures_market_codes.get(base_code, "CF")
+            
+            # KIS API 호출
+            tr_id = "FHMIF10000000"
+            params = {
+                "FID_COND_MRKT_DIV_CODE": market_code,
+                "FID_INPUT_ISCD": futures_code
+            }
+            
+            result = self._call_kis_api(
+                "/uapi/domestic-futureoption/v1/quotations/inquire-price",
+                tr_id, 
+                params, 
+                method="GET"
+            )
+            
+            output1 = result.get('output1', {})
+            current_price_str = output1.get('futs_prpr', '0')
+            current_price = float(current_price_str) if current_price_str else 0.0
+            
+            logger.info(f"Futures current price for {symbol} ({futures_code}): {current_price}")
+            return current_price
+            
+        except Exception as e:
+            logger.error(f"Failed to get futures price for {symbol}: {e}")
+            return 0.0
+
+    def get_futures_multiplier(self, symbol: str) -> int:
+        """선물 승수 조회 (범용)"""
+        # 심볼에서 기본 코드 추출
+        if len(symbol) <= 6 and symbol.upper() in self.futures_symbol_mapping:
+            base_code = self.futures_symbol_mapping[symbol.upper()]
+        else:
+            base_code = symbol[:4] if len(symbol) >= 4 else symbol
+        
+        return self.futures_multipliers.get(base_code, 10000)  # 기본값
+    
+    def convert_symbol_to_futures_code(self, symbol: str) -> str:
+        """
+        범용 심볼을 실제 선물 월물 코드로 변환
+        예: 'USDKRW' -> '175W01'
+        """
+        # 1. 심볼 매핑에서 기본 코드 찾기
+        base_code = self.futures_symbol_mapping.get(symbol.upper())
+        if not base_code:
+            logger.warning(f"No futures mapping found for symbol: {symbol}")
+            return symbol  # 변환 실패시 원본 반환
+        
+        # 2. 현재 월물 코드 생성
+        current_month_code = self._calculate_current_month_code(base_code)
+        futures_code = f"{base_code}{current_month_code}"
+        
+        logger.info(f"Symbol converted: {symbol} -> {futures_code}")
+        return futures_code
+
+    def _calculate_current_month_code(self, base_code: str) -> str:
+        """기본 코드에 대한 현재 월물 코드 계산"""
+        from datetime import datetime, timedelta
+        import calendar
+        
+        expiry_rule = self.futures_expiry_rules.get(base_code, {"type": "third_thursday"})
+        expiry_type = expiry_rule.get("type", "third_thursday")
+        
+        current_date = datetime.now()
+        
+        if expiry_type == "third_thursday":
+            expiry_date = self._get_third_thursday(current_date.year, current_date.month)
+        elif expiry_type == "second_thursday":
+            expiry_date = self._get_second_thursday(current_date.year, current_date.month)
+        else:
+            # 기본값: 월말
+            expiry_date = datetime(current_date.year, current_date.month, 
+                                calendar.monthrange(current_date.year, current_date.month)[1])
+        
+        # 만료일 지났으면 다음 월 사용
+        if current_date >= expiry_date:
+            next_month = current_date.month + 1
+            if next_month > 12:
+                next_month = 1
+            target_month = next_month
+        else:
+            target_month = current_date.month
+        
+        return f"{target_month:02d}"
+
+    def _get_third_thursday(self, year: int, month: int) -> datetime:
+        """셋째 주 목요일 계산"""
+        from datetime import datetime, timedelta
+        first_day = datetime(year, month, 1)
+        days_until_thursday = (3 - first_day.weekday()) % 7
+        first_thursday = first_day + timedelta(days=days_until_thursday)
+        return first_thursday + timedelta(days=14)
+
+    def _get_second_thursday(self, year: int, month: int) -> datetime:
+        """둘째 주 목요일 계산"""
+        from datetime import datetime, timedelta
+        first_day = datetime(year, month, 1)
+        days_until_thursday = (3 - first_day.weekday()) % 7
+        first_thursday = first_day + timedelta(days=days_until_thursday)
+        return first_thursday + timedelta(days=7)
+    
 #endregion Future
     
 #region Overseas

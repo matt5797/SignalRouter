@@ -281,7 +281,8 @@ class AutoTrader:
                     secret_file_path=config.secret_file,
                     is_virtual=config.is_virtual,
                     is_active=config.is_active,
-                    token_storage_path=token_storage_path
+                    token_storage_path=token_storage_path,
+                    config_loader=self.config
                 )
                 accounts[account_id] = account
                 logger.info(f"Account loaded: {account_id} (type: {config.type}, virtual: {config.is_virtual})")

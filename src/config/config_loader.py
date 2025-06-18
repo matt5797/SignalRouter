@@ -29,7 +29,7 @@ class StrategyConfig:
     max_position_ratio: float
     max_daily_loss: float
     is_active: bool
-
+    leverage: float = 1.0
 
 class ConfigLoader:
     """YAML 설정 파일 로더"""
@@ -143,6 +143,30 @@ class ConfigLoader:
             if strategy_data.get('webhook_token') == webhook_token:
                 return self.get_strategy_config(strategy_name)
         return None
+    
+    def get_futures_mapping_config(self) -> Dict[str, Any]:
+        """선물 매핑 설정 반환"""
+        return self._config.get('futures_mapping', {})
+    
+    def get_futures_symbol_mapping(self) -> Dict[str, str]:
+        """선물 심볼 매핑 반환"""
+        mapping = self.get_futures_mapping_config()
+        return mapping.get('symbol_mapping', {})
+    
+    def get_futures_multipliers(self) -> Dict[str, int]:
+        """선물 승수 매핑 반환"""
+        mapping = self.get_futures_mapping_config()
+        return mapping.get('multipliers', {})
+    
+    def get_futures_market_codes(self) -> Dict[str, str]:
+        """선물 시장 코드 매핑 반환"""
+        mapping = self.get_futures_mapping_config()
+        return mapping.get('market_codes', {})
+    
+    def get_futures_expiry_rules(self) -> Dict[str, Dict]:
+        """선물 만료 규칙 반환"""
+        mapping = self.get_futures_mapping_config()
+        return mapping.get('expiry_rules', {})
     
     def reload(self) -> None:
         """설정 파일 다시 로드"""

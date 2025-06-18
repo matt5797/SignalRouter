@@ -30,7 +30,8 @@ class Account:
         secret_file_path: str,
         is_virtual: bool = False,
         is_active: bool = True,
-        token_storage_path: str = "secrets/tokens/"
+        token_storage_path: str = "secrets/tokens/",
+        config_loader=None
     ):
         self.account_id = account_id
         self.name = name
@@ -43,7 +44,8 @@ class Account:
             account_id=account_id, 
             secret_file_path=secret_file_path, 
             is_virtual=is_virtual,
-            token_storage_path=token_storage_path
+            token_storage_path=token_storage_path,
+            config_loader=config_loader
         )
         
         logger.info(f"Account initialized: {account_id} ({name}) - Virtual: {is_virtual}")

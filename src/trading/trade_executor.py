@@ -120,7 +120,8 @@ class TradeExecutor:
                 f"System error during signal execution: {str(e)}"
             )
     
-    def _calculate_actual_quantity(self, account: Account, signal_data: Dict, current_position: Dict) -> Dict:
+    def _calculate_actual_quantity(self, account: Account, signal_data: Dict,
+                                   current_position: Dict, strategy_config=None) -> Dict:
         """
         실제 거래 수량 계산
         
@@ -133,6 +134,14 @@ class TradeExecutor:
             }
         """
         try:
+            original_symbol = signal_data.get('symbol', '')
+            if account.account_type == AccountType.FUTURES:
+                converted_symbol = account.broker.convert_symbol_to_futures_code(original_symbol)
+                if converted_symbol != original_symbol:
+                    signal_data = signal_data.copy()
+                    signal_data['symbol'] = converted_symbol
+                    logger.info(f"Futures symbol converted: {original_symbol} -> {converted_symbol}")
+            
             original_quantity = signal_data.get('quantity', 0)
             action = signal_data.get('action', '').upper()
             symbol = signal_data.get('symbol', '')
@@ -148,7 +157,8 @@ class TradeExecutor:
                         'success': True,
                         'quantity': original_quantity,
                         'message': f'Using specified quantity: {original_quantity}',
-                        'is_full_trade': False
+                        'is_full_trade': False,
+                        'converted_symbol': signal_data.get('symbol')
                     }
                 else:
                     return {
@@ -174,7 +184,7 @@ class TradeExecutor:
                     # 포지션이 없는 경우
                     if account.account_type == AccountType.FUTURES:
                         # 선물은 숏 진입 가능 - 기본 수량 사용
-                        actual_quantity = self._get_default_quantity(account, symbol)
+                        actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
                     else:
                         return {
                             'success': False,
@@ -189,10 +199,10 @@ class TradeExecutor:
                     actual_quantity = abs(current_qty)
                 elif current_qty > 0:
                     # 이미 롱 포지션이 있는 경우 - 기본 수량으로 추가 매수
-                    actual_quantity = self._get_default_quantity(account, symbol)
+                    actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
                 else:
                     # 포지션이 없는 경우 - 기본 수량으로 롱 진입
-                    actual_quantity = self._get_default_quantity(account, symbol)
+                    actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
             
             else:
                 return {
@@ -214,7 +224,8 @@ class TradeExecutor:
                 'success': True,
                 'quantity': actual_quantity,
                 'message': f'Full trade quantity calculated: {actual_quantity}',
-                'is_full_trade': True
+                'is_full_trade': True,
+                'converted_symbol': signal_data.get('symbol')
             }
             
         except Exception as e:
@@ -226,27 +237,56 @@ class TradeExecutor:
                 'is_full_trade': False
             }
     
-    def _get_default_quantity(self, account: Account, symbol: str) -> int:
-        """기본 거래 수량 계산 (전량 거래시 포지션이 없는 경우)"""
+    def _get_default_quantity(self, account: Account, symbol: str, strategy_config=None) -> int:
+        """거래 수량 계산 - 레버리지 적용"""
         try:
-            # 매수 가능 금액 조회
-            orderable = account.get_orderable_amount(symbol)
-            orderable_qty = orderable.get('orderable_quantity', 0)
+            if account.account_type == AccountType.FUTURES and strategy_config:
+                return self._calculate_futures_quantity_with_leverage(account, symbol, strategy_config)
+            else:
+                # 주식 로직
+                orderable = account.get_orderable_amount(symbol)
+                orderable_qty = orderable.get('orderable_quantity', 0)
+                return max(1, int(orderable_qty * 0.1)) if orderable_qty > 0 else 1
+                
+        except Exception as e:
+            logger.error(f"Failed to get default quantity: {e}")
+            return 1
+
+    def _calculate_futures_quantity_with_leverage(self, account: Account, symbol: str, strategy_config) -> int:
+        """레버리지 적용 선물 수량 계산"""
+        try:
+            # 설정값
+            leverage = getattr(strategy_config, 'leverage', 1.0)
+            max_position_ratio = getattr(strategy_config, 'max_position_ratio', 1.0)
             
-            if orderable_qty > 0:
-                # 최대 매수가능 수량의 10%를 기본값으로 사용 (리스크 관리)
-                default_qty = max(1, int(orderable_qty * 0.1))
-                logger.debug(f"Default quantity for {symbol}: {default_qty} (10% of {orderable_qty})")
-                return default_qty
+            # 계좌 잔고
+            balance = account.get_balance()
+            total_balance = balance.get('total_balance', 0)
             
-            # 매수가능 수량을 구할 수 없으면 고정값 사용
-            logger.warning(f"Could not determine orderable quantity for {symbol}, using fixed default")
-            return 1  # 최소 1주
+            if total_balance <= 0:
+                return 1
+            
+            # 선물 정보
+            current_price = account.broker.get_futures_current_price(symbol)
+            multiplier = account.broker.get_futures_multiplier(symbol)
+            
+            if current_price <= 0:
+                logger.warning(f"Invalid price for {symbol}: {current_price}")
+                return 1
+            
+            # 수량 계산
+            investable_amount = total_balance * leverage * max_position_ratio
+            contract_value = current_price * multiplier
+            calculated_quantity = int(investable_amount / contract_value)
+            
+            final_quantity = max(1, calculated_quantity)
+            
+            return final_quantity
             
         except Exception as e:
-            logger.error(f"Failed to get default quantity for {symbol}: {e}")
-            return 1  # 안전한 기본값
-    
+            logger.error(f"Leverage calculation failed: {e}")
+            return 1
+
     def place_order(self, account: Account, order_data: Dict) -> Dict:
         """
         단일 주문 실행

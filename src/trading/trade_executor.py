@@ -25,7 +25,7 @@ class TradeExecutor:
         logger.info("TradeExecutor initialized")
     
     # ========== 메인 실행 로직 ==========
-    
+
     def execute_signal(self, account: Account, signal_data: Dict) -> Dict:
         """
         시그널 실행 메인 로직
@@ -55,12 +55,26 @@ class TradeExecutor:
                     f"Strategy not found for token: {signal_data.get('webhook_token')}"
                 )
             
-            # 2. 현재 포지션 조회
-            current_position = account.get_position_for_symbol(signal_data['symbol'])
+            # 2. 심볼 변환 (선물인 경우)
+            original_symbol = signal_data.get('symbol', '')
+            converted_symbol = original_symbol
             
-            # 3. 실제 거래 수량 계산
+            if account.account_type == AccountType.FUTURES:
+                converted_symbol = account.broker.convert_symbol_to_futures_code(original_symbol)
+                if converted_symbol != original_symbol:
+                    logger.info(f"Futures symbol converted: {original_symbol} -> {converted_symbol}")
+            
+            # 시그널 데이터에 변환된 심볼 적용
+            signal_data = signal_data.copy()
+            signal_data['symbol'] = converted_symbol
+            signal_data['original_symbol'] = original_symbol
+            
+            # 3. 변환된 심볼로 현재 포지션 조회
+            current_position = account.get_position_for_symbol(converted_symbol)
+            
+            # 4. 실제 거래 수량 계산
             actual_quantity_result = self._calculate_actual_quantity(
-                account, signal_data, current_position
+                account, signal_data, current_position, strategy_config
             )
             
             if not actual_quantity_result['success']:
@@ -71,16 +85,15 @@ class TradeExecutor:
                 )
             
             # 실제 수량으로 시그널 데이터 업데이트
-            signal_data = signal_data.copy()
             signal_data['quantity'] = actual_quantity_result['quantity']
             
-            # 4. 포지션 전환 타입 결정
+            # 5. 포지션 전환 타입 결정
             transition_type = self._calculate_transition_type(current_position, signal_data)
             
-            # 5. 주문 생성
+            # 6. 주문 생성
             trade_order = TradeOrder.from_signal(signal_data, account.account_id, transition_type)
             
-            # 6. 리스크 체크
+            # 7. 리스크 체크
             risk_check = self._check_all_risks(account, trade_order, strategy_config)
             if not risk_check['approved']:
                 return self._error_result(
@@ -89,7 +102,7 @@ class TradeExecutor:
                     risk_check
                 )
             
-            # 7. 주문 실행
+            # 8. 주문 실행
             execution_result = self._execute_trade_order(account, trade_order, strategy_config)
             
             if execution_result['success']:
@@ -101,10 +114,12 @@ class TradeExecutor:
                     'error_type': None,
                     'details': {
                         'symbol': trade_order.symbol,
+                        'original_symbol': original_symbol,
                         'action': trade_order.action,
                         'quantity': trade_order.quantity,
                         'transition_type': transition_type.value,
-                        'filled': execution_result.get('filled', False)
+                        'filled': execution_result.get('filled', False),
+                        'symbol_converted': converted_symbol != original_symbol
                     }
                 }
             else:
@@ -121,7 +136,7 @@ class TradeExecutor:
             )
     
     def _calculate_actual_quantity(self, account: Account, signal_data: Dict,
-                                   current_position: Dict, strategy_config=None) -> Dict:
+                               current_position: Dict, strategy_config=None) -> Dict:
         """
         실제 거래 수량 계산
         
@@ -134,17 +149,10 @@ class TradeExecutor:
             }
         """
         try:
-            original_symbol = signal_data.get('symbol', '')
-            if account.account_type == AccountType.FUTURES:
-                converted_symbol = account.broker.convert_symbol_to_futures_code(original_symbol)
-                if converted_symbol != original_symbol:
-                    signal_data = signal_data.copy()
-                    signal_data['symbol'] = converted_symbol
-                    logger.info(f"Futures symbol converted: {original_symbol} -> {converted_symbol}")
-            
+            # 이미 변환된 심볼 사용
+            symbol = signal_data.get('symbol', '')
             original_quantity = signal_data.get('quantity', 0)
             action = signal_data.get('action', '').upper()
-            symbol = signal_data.get('symbol', '')
             current_qty = current_position.get('quantity', 0)
             
             # 전량 거래인지 확인 (quantity가 0 또는 -1)
@@ -157,8 +165,7 @@ class TradeExecutor:
                         'success': True,
                         'quantity': original_quantity,
                         'message': f'Using specified quantity: {original_quantity}',
-                        'is_full_trade': False,
-                        'converted_symbol': signal_data.get('symbol')
+                        'is_full_trade': False
                     }
                 else:
                     return {
@@ -168,28 +175,31 @@ class TradeExecutor:
                         'is_full_trade': False
                     }
             
+            # 전량 거래 로직
             if action == 'SELL':
                 if current_qty > 0:
                     # 롱 포지션 전량 매도
                     actual_quantity = current_qty
+                    logger.info(f"SELL: Closing long position {current_qty} for {symbol}")
                 elif current_qty < 0:
                     # 이미 숏 포지션이 있는 경우 - 경고하고 스킵
                     return {
                         'success': False,
                         'quantity': 0,
-                        'message': f'Cannot sell: already in short position ({current_qty})',
+                        'message': f'Cannot sell: already in short position ({current_qty}) for {symbol}',
                         'is_full_trade': True
                     }
                 else:
                     # 포지션이 없는 경우
                     if account.account_type == AccountType.FUTURES:
                         # 선물은 숏 진입 가능 - 기본 수량 사용
-                        actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
+                        actual_quantity = self._get_default_quantity(account, symbol, strategy_config)
+                        logger.info(f"SELL: Opening short position {actual_quantity} for {symbol}")
                     else:
                         return {
                             'success': False,
                             'quantity': 0,
-                            'message': f'Cannot sell: no position to close and not futures account',
+                            'message': f'Cannot sell: no position to close and not futures account for {symbol}',
                             'is_full_trade': True
                         }
             
@@ -197,12 +207,15 @@ class TradeExecutor:
                 if current_qty < 0:
                     # 숏 포지션 전량 청산
                     actual_quantity = abs(current_qty)
+                    logger.info(f"BUY: Closing short position {current_qty} for {symbol}")
                 elif current_qty > 0:
                     # 이미 롱 포지션이 있는 경우 - 기본 수량으로 추가 매수
-                    actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
+                    actual_quantity = self._get_default_quantity(account, symbol, strategy_config)
+                    logger.info(f"BUY: Adding to long position {actual_quantity} for {symbol} (current: {current_qty})")
                 else:
                     # 포지션이 없는 경우 - 기본 수량으로 롱 진입
-                    actual_quantity = self._get_default_quantity(account, signal_data['symbol'], strategy_config)
+                    actual_quantity = self._get_default_quantity(account, symbol, strategy_config)
+                    logger.info(f"BUY: Opening long position {actual_quantity} for {symbol}")
             
             else:
                 return {
@@ -216,16 +229,15 @@ class TradeExecutor:
                 return {
                     'success': False,
                     'quantity': 0,
-                    'message': f'Calculated quantity is zero or negative: {actual_quantity}',
+                    'message': f'Calculated quantity is zero or negative: {actual_quantity} for {symbol}',
                     'is_full_trade': True
                 }
             
             return {
                 'success': True,
                 'quantity': actual_quantity,
-                'message': f'Full trade quantity calculated: {actual_quantity}',
-                'is_full_trade': True,
-                'converted_symbol': signal_data.get('symbol')
+                'message': f'Calculated quantity: {actual_quantity} for {symbol} (action: {action}, current: {current_qty})',
+                'is_full_trade': True
             }
             
         except Exception as e:
@@ -249,7 +261,7 @@ class TradeExecutor:
                 return max(1, int(orderable_qty * 0.1)) if orderable_qty > 0 else 1
                 
         except Exception as e:
-            logger.error(f"Failed to get default quantity: {e}")
+            logger.error(f"Failed to get default quantity for {symbol}: {e}")
             return 1
 
     def _calculate_futures_quantity_with_leverage(self, account: Account, symbol: str, strategy_config) -> int:
@@ -264,6 +276,7 @@ class TradeExecutor:
             total_balance = balance.get('total_balance', 0)
             
             if total_balance <= 0:
+                logger.warning(f"Invalid balance for futures calculation: {total_balance}")
                 return 1
             
             # 선물 정보
@@ -281,10 +294,14 @@ class TradeExecutor:
             
             final_quantity = max(1, calculated_quantity)
             
+            logger.info(f"Futures quantity calculated for {symbol}: {final_quantity} contracts "
+                       f"(balance: {total_balance:,.0f}, leverage: {leverage}, "
+                       f"price: {current_price}, multiplier: {multiplier})")
+            
             return final_quantity
             
         except Exception as e:
-            logger.error(f"Leverage calculation failed: {e}")
+            logger.error(f"Leverage calculation failed for {symbol}: {e}")
             return 1
 
     def place_order(self, account: Account, order_data: Dict) -> Dict:

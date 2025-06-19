@@ -347,6 +347,7 @@ class TradeExecutor:
         
         while time.time() - start_time < timeout_seconds:
             try:
+                time.sleep(1)
                 status = account.broker.get_order_status(order_id)
                 last_status = status
                 
@@ -357,7 +358,7 @@ class TradeExecutor:
                     logger.error(f"Order failed: {order_id} - {status['status']}")
                     return False, status
                 
-                time.sleep(2)
+                time.sleep(4)
                 
             except Exception as e:
                 logger.error(f"Error checking order status: {e}")

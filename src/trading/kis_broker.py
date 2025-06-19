@@ -10,7 +10,8 @@ from typing import Dict, List, Optional, Set
 from decimal import Decimal
 import logging
 from pathlib import Path
-from datetime import datetime, time as dt_time, date
+from datetime import datetime, time as dt_time, date, timedelta
+import calendar
 from .kis_auth import KisAuth
 from .auth_factory import AuthFactory
 from .secret_loader import SecretLoader
@@ -147,7 +148,6 @@ class KisBroker:
     
     def _get_cached_or_fetch(self, cache_key: str, fetch_func, ttl: int = 30):
         """캐시 확인 후 없으면 실행"""
-        import time
         now = time.time()
         
         if cache_key in self._cache:
@@ -622,7 +622,6 @@ class KisBroker:
         else:
             org_no, odno = "", order_id
         
-        from datetime import datetime
         today = datetime.today().strftime("%Y%m%d")
         
         params = {
@@ -888,7 +887,6 @@ class KisBroker:
         """선물 주문 상태 조회"""
         tr_id = self._get_tr_id('INQUIRY')
         
-        from datetime import datetime
         today = datetime.today().strftime("%Y%m%d")
         
         params = {
@@ -902,8 +900,6 @@ class KisBroker:
             "STRT_ODNO": "",
             "PDNO": "",
             "MKET_ID_CD": "",
-            "FUOP_DVSN_CD": "",
-            "SCRN_DVSN": "02",
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": ""
         }
@@ -911,14 +907,17 @@ class KisBroker:
         session = self.get_market_session()
         if session == 'NIGHT':
             url = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-ccnl"
+            params["FUOP_DVSN_CD"] = ""
+            params["SCRN_DVSN"] = "02"
         else:
             url = "/uapi/domestic-futureoption/v1/trading/inquire-ccnl"
         
         result = self._call_kis_api(url, tr_id, params, method="GET")
         
         orders = result.get('output1', [])
+        
         for order in orders:
-            if order.get('odno') == order_id:
+            if order.get('odno').strip().lstrip('0').strip() == order_id.strip().lstrip('0').strip():
                 status = self._determine_order_status(order)
 
                 return {
@@ -1041,8 +1040,6 @@ class KisBroker:
 
     def _calculate_current_month_code(self, base_code: str) -> str:
         """기본 코드에 대한 현재 월물 코드 계산"""
-        from datetime import datetime, timedelta
-        import calendar
         
         expiry_rule = self.futures_expiry_rules.get(base_code, {"type": "third_thursday"})
         expiry_type = expiry_rule.get("type", "third_thursday")
@@ -1071,7 +1068,6 @@ class KisBroker:
 
     def _get_third_thursday(self, year: int, month: int) -> datetime:
         """셋째 주 목요일 계산"""
-        from datetime import datetime, timedelta
         first_day = datetime(year, month, 1)
         days_until_thursday = (3 - first_day.weekday()) % 7
         first_thursday = first_day + timedelta(days=days_until_thursday)
@@ -1079,7 +1075,6 @@ class KisBroker:
 
     def _get_second_thursday(self, year: int, month: int) -> datetime:
         """둘째 주 목요일 계산"""
-        from datetime import datetime, timedelta
         first_day = datetime(year, month, 1)
         days_until_thursday = (3 - first_day.weekday()) % 7
         first_thursday = first_day + timedelta(days=days_until_thursday)
@@ -1184,7 +1179,6 @@ class KisBroker:
         """해외주식 주문 상태 조회"""
         tr_id = "VTTS3035R" if self.is_virtual else "TTTS3035R"
         
-        from datetime import datetime
         today = datetime.today().strftime("%Y%m%d")
         
         params = {
@@ -1326,7 +1320,6 @@ class KisBroker:
             # 필수 필드 추출
             ord_qty = int(order_data.get('ord_qty', 0))          # 주문수량
             tot_ccld_qty = int(order_data.get('tot_ccld_qty', 0)) # 총체결수량  
-            rmn_qty = int(order_data.get('rmn_qty', 0))          # 잔여수량
             rjct_qty = int(order_data.get('rjct_qty', 0))        # 거부수량
             cncl_yn = order_data.get('cncl_yn', 'N')             # 취소여부
             cnc_cfrm_qty = int(order_data.get('cnc_cfrm_qty', 0)) # 취소확인수량

@@ -403,6 +403,8 @@ class KisBroker:
                       method: str = "POST", tr_cont: str = "") -> Dict:
         """공통 KIS API 호출 메서드"""
         try:
+            time.sleep(1)
+
             url = f"{self.auth.base_url}{url_path}"
             headers = self.auth.get_request_headers(tr_id, tr_cont)
             

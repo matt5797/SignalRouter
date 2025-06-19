@@ -16,6 +16,7 @@ class TradeSignal:
     action: str            # BUY/SELL
     quantity: int          # 수량 (0 또는 -1이면 전량 처리)
     price: Optional[float] = None    # 가격 (None=시장가)
+    reverse_position: bool = False   # 포지션 전환 플래그
     timestamp: Optional[datetime] = None
     
     def __post_init__(self):
@@ -57,6 +58,10 @@ class TradeSignal:
         except Exception:
             return False
     
+    def is_reverse_signal(self) -> bool:
+        """포지션 전환 시그널 여부"""
+        return self.reverse_position
+    
     def to_dict(self) -> Dict:
         """딕셔너리로 변환"""
         data = asdict(self)
@@ -72,12 +77,17 @@ class TradeSignal:
         if quantity is None:
             quantity = 0
         
+        reverse_position = payload.get('reverse_position', False)
+        if isinstance(reverse_position, str):
+            reverse_position = reverse_position.lower() in ['true', '1', 'yes']
+        
         return cls(
             strategy=payload.get('strategy', ''),
             symbol=payload.get('symbol', ''),
             action=payload.get('action', ''),
             quantity=int(quantity),
             price=float(payload['price']) if payload.get('price') else None,
+            reverse_position=reverse_position,
             timestamp=datetime.now()
         )
     

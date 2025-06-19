@@ -36,12 +36,14 @@ class WebhookHandler:
             success = self.auto_trader.process_signal(parsed_signal)
             
             if success:
-                logger.info(f"Signal processed successfully: {parsed_signal.get('symbol')}")
+                logger.info(f"Signal processed successfully: {parsed_signal.get('symbol')} "
+                          f"(reverse: {parsed_signal.get('reverse_position', False)})")
                 return Response(
                     content=json.dumps({
                         "status": "success", 
                         "message": "Signal processed",
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "reverse_position": parsed_signal.get('reverse_position', False)
                     }),
                     status_code=200,
                     media_type="application/json"
@@ -124,12 +126,18 @@ class WebhookHandler:
             if quantity is None:
                 quantity = 0
             
+            # reverse_position 플래그 처리
+            reverse_position = payload.get('reverse_position', False)
+            if isinstance(reverse_position, str):
+                reverse_position = reverse_position.lower() in ['true', '1', 'yes']
+            
             # 데이터 타입 변환 및 정규화
             parsed = {
                 'strategy': str(payload['strategy']).strip(),
                 'symbol': str(payload['symbol']).strip().upper(),
                 'action': str(payload['action']).strip().upper(),
                 'quantity': int(quantity),
+                'reverse_position': reverse_position,
                 'webhook_token': str(payload['webhook_token']).strip(),
                 'timestamp': datetime.now().isoformat()
             }

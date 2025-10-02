@@ -105,7 +105,7 @@ class KisBroker:
             params
         )
         
-        order_id = result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('ODNO', 'unknown')
         logger.info(f"Futures buy order: {order_id}")
         return order_id
     
@@ -129,7 +129,7 @@ class KisBroker:
             params
         )
         
-        order_id = result.get('output', {}).get('odno', 'unknown')
+        order_id = result.get('output', {}).get('ODNO', 'unknown')
         logger.info(f"Futures sell order: {order_id}")
         return order_id
     
@@ -208,10 +208,6 @@ class KisBroker:
         if target_time.weekday() >= 5:
             return 'CLOSED'
         
-        target_date = target_time.date()
-        if self._is_holiday(target_date):
-            return 'CLOSED'
-        
         current_time = target_time.time()
         
         if dt_time(9, 0) <= current_time <= dt_time(15, 30):
@@ -221,57 +217,6 @@ class KisBroker:
             return 'NIGHT'
         
         return 'CLOSED'
-    
-    def _is_holiday(self, target_date: date) -> bool:
-        try:
-            if (self._holiday_cache_date == target_date and 
-                target_date.isoformat() in self._holiday_cache):
-                return self._holiday_cache[target_date.isoformat()]
-            
-            holidays = self._fetch_holidays(target_date.year)
-            
-            self._holiday_cache_date = target_date
-            is_holiday = target_date.isoformat() in holidays
-            self._holiday_cache[target_date.isoformat()] = is_holiday
-            
-            return is_holiday
-        
-        except Exception as e:
-            logger.warning(f"Holiday check failed: {e}")
-            return False
-    
-    def _fetch_holidays(self, year: int) -> Set[str]:
-        try:
-            tr_id = "CTCA0903R"
-            
-            params = {
-                "BASS_DT": f"{year}0101",
-                "CTX_AREA_NK": "",
-                "CTX_AREA_FK": ""
-            }
-            
-            result = self._call_kis_api(
-                "/uapi/domestic-stock/v1/quotations/chk-holiday", 
-                tr_id, 
-                params, 
-                method="GET"
-            )
-            
-            holidays = set()
-            output_list = result.get('output', [])
-            
-            for item in output_list:
-                holiday_date = item.get('bass_dt', '')
-                if holiday_date and len(holiday_date) == 8:
-                    formatted_date = f"{holiday_date[:4]}-{holiday_date[4:6]}-{holiday_date[6:8]}"
-                    holidays.add(formatted_date)
-            
-            logger.info(f"Fetched {len(holidays)} holidays for year {year}")
-            return holidays
-        
-        except Exception as e:
-            logger.error(f"Failed to fetch holidays for {year}: {e}")
-            return set()
     
     def _call_kis_api(self, url_path: str, tr_id: str, params: Dict, 
                       method: str = "POST", tr_cont: str = "") -> Dict:

@@ -5,12 +5,12 @@ from datetime import datetime
 
 
 def setup_logger(name: str = "signal_executor", log_dir: str = "logs") -> logging.Logger:
-    logger = logging.getLogger(name)
+    root_logger = logging.getLogger()
     
-    if logger.handlers:
-        return logger
+    if root_logger.handlers:
+        return logging.getLogger(name)
     
-    logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG)
     
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
@@ -19,12 +19,13 @@ def setup_logger(name: str = "signal_executor", log_dir: str = "logs") -> loggin
     log_file = log_path / f"signal_{today}.log"
     
     file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
     console_formatter = logging.Formatter(
-        '%(levelname)s: %(message)s'
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
     )
     
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -35,13 +36,26 @@ def setup_logger(name: str = "signal_executor", log_dir: str = "logs") -> loggin
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(console_formatter)
     
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
     
-    return logger
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    
+    root_logger.info("=" * 80)
+    root_logger.info(f"Logger initialized - Log file: {log_file}")
+    root_logger.info("=" * 80)
+    
+    return logging.getLogger(name)
 
 
 def get_logger(name: str = None) -> logging.Logger:
     if name:
         return logging.getLogger(name)
-    return logging.getLogger("signal_executor")
+    return logging.getLogger()

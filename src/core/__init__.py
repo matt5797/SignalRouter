@@ -1,7 +1,3 @@
-"""
-Core 모듈 - 핵심 비즈니스 로직
-"""
+from .executor import SignalExecutor
 
-from .auto_trader import AutoTrader
-
-__all__ = ['AutoTrader']
+__all__ = ['SignalExecutor']

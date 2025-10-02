@@ -1,108 +1,47 @@
 # SignalRouter 자동매매 시스템 설정
 
-# 데이터베이스 설정
-database:
-  # SQLite (로컬 개발용)
-  path: "data/trading.db"
-  
-  # PostgreSQL (운영환경용 - Railway)
-  # 환경변수 DATABASE_URL을 사용하면 자동으로 PostgreSQL 연결
-  postgresql_url: ""  # 환경변수 DATABASE_URL 또는 POSTGRESQL_URL 사용
-  
-  # 백업 설정
-  backup_enabled: true
-  backup_interval_hours: 48
-  
-  # 연결 풀 설정 (PostgreSQL용)
-  pool_size: 2
-  max_overflow: 10
-  pool_timeout: 30
-
-# 웹훅 서버 설정
 webhook:
   host: "0.0.0.0"
   port: 8000
-  secret_key: "your-secret-key-here"
-  allowed_ips: []  # 빈 리스트면 모든 IP 허용
 
-# KIS API 설정
-kis_api:
-  prod_url: "https://openapi.koreainvestment.com:9443"
-  vps_url: "https://openapivts.koreainvestment.com:29443"
-  token_storage_path: "secrets/tokens/"
-  auto_reauth: true
-  timeout_seconds: 30
-  retry_count: 3
-  retry_delay_seconds: 5
-
-# 계좌 설정 (환경변수 ACCOUNTS_CONFIG를 우선 사용)
 accounts:
-  futures_real_01:
-    name: "선물 실전 계좌 01"
+  futures_real:
+    account_id: "futures_real"
+    name: "Won-Dollar Futures Real"
     type: "FUTURES"
     is_virtual: false
     is_active: true
+    secret_file: "secrets/futures_real_01.json"
   
-  stock_virtual_01:
-    name: "주식 모의 계좌 01"
-    type: "STOCK"
-    is_virtual: true
-    is_active: true
-
-  futures_virtual_01:
-    name: "선물 모의 계좌 01"
+  futures_virtual:
+    account_id: "futures_virtual"
+    name: "Won-Dollar Futures Virtual"
     type: "FUTURES"
     is_virtual: true
     is_active: true
+    secret_file: "secrets/futures_virtual_01.json"
+    
+  stock_virtual_01:
+    account_id: "stock_virtual"
+    name: "Stock Virtual"
+    type: "STOCK"
+    is_virtual: true
+    is_active: true
+    secret_file: "secrets/stock_virtual_01.json"
 
-# 전략별 설정
 strategies:
-  FUTURES_MOMENTUM:
-    account_id: "futures_virtual_01"
+  trend_follow_real:
+    account_id: "futures_real"
     webhook_token: "webhook_token_2"
-    max_position_ratio: 1
-    max_daily_loss: 3000000
-    is_active: false
+    is_active: true
   
-  TEST_STRATEGY:
-    account_id: "stock_virtual_01"
-    webhook_token: "webhook_token_3"
-    max_position_ratio: 1
-    max_daily_loss: 1000000
+  trend_follow_virtual:
+    account_id: "futures_virtual"
+    webhook_token: "webhook_token_4"
     is_active: true
 
-# 리스크 관리 설정
-risk_management:
-  # 전역 설정
-  global_max_daily_loss: 10000000  # 전체 계좌 일일 최대 손실
-  position_timeout_seconds: 60    # 포지션 전환 대기 시간
-  order_retry_count: 3           # 주문 재시도 횟수
-  order_retry_delay_seconds: 5   # 재시도 간격
-  
-  # 거래 시간 제한
-  trading_hours:
-    start_time: "05:00"
-    end_time: "09:00"
-    timezone: "Asia/Seoul"
+kis_api:
+  token_storage_path: "secrets/tokens/"
 
-# 로깅 설정
-logging:
-  level: "INFO"
-  file_path: "logs/trading.log"
-  max_file_size_mb: 10
-  backup_count: 5
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# 대시보드 설정
-dashboard:
-  host: "0.0.0.0"
-  port: 8501
-  title: "SignalRouter Dashboard"
-  refresh_interval_seconds: 5
-
-# 알림 설정 (향후 확장용)
-notifications:
+notifier:
   enabled: false
-  slack_webhook: ""
-  telegram_bot_token: ""
-  telegram_chat_id: ""

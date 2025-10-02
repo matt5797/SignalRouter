@@ -6,9 +6,6 @@ uvicorn>=0.23.0            # ASGI 서버
 streamlit>=1.25.0          # 대시보드
 pyyaml>=6.0                # 설정 파일
 
-# Database
-psycopg2-binary>=2.9.0     # PostgreSQL adapter
-
 # Development
 pytest>=7.0.0              # 테스팅
 pytest-asyncio>=0.21.0     # 비동기 테스트

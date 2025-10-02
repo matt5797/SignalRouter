@@ -1,11 +1,9 @@
-import time
 import requests
 import logging
-from typing import Dict, Optional, Set
-from datetime import datetime, time as dt_time, date
+from typing import Dict, Optional
+from datetime import datetime, time as dt_time
 
-from .auth import KisAuth
-from .auth_factory import AuthFactory
+from .kis_auth import KisAuth
 from .secrets import SecretLoader
 
 logger = logging.getLogger(__name__)
@@ -26,21 +24,22 @@ class KisBroker:
         ('FUTURES', 'NIGHT', False, 'INQUIRY'): 'STTN5201R',
     }
     
-    _holiday_cache = {}
-    _holiday_cache_date = None
-    
     def __init__(self, account_id: str, secret_identifier: str = None, 
-                 is_virtual: bool = False, token_storage_path: str = "secrets/tokens/"):
+                 is_virtual: bool = False):
         self.account_id = account_id
         self.secret_identifier = secret_identifier or account_id
         self.is_virtual = is_virtual
         
-        self.auth = AuthFactory.create_from_secret(
-            self.secret_identifier, 
-            token_storage_path
+        self.secret_data = SecretLoader.load_secret(self.secret_identifier)
+        
+        self.auth = KisAuth(
+            app_key=self.secret_data['app_key'],
+            app_secret=self.secret_data['app_secret'],
+            account_number=self.secret_data['account_number'],
+            account_product=self.secret_data['account_product'],
+            is_virtual=self.is_virtual
         )
         
-        self.secret_data = SecretLoader.load_secret(self.secret_identifier)
         self.account_type = self._get_account_type()
         
         logger.info(f"KisBroker initialized: {account_id} (Type: {self.account_type}, Virtual: {is_virtual})")
@@ -297,13 +296,3 @@ class KisBroker:
             return 'FUTURES'
         else:
             return 'STOCK'
-    
-    def _map_futures_status(self, status_name: str) -> str:
-        status_map = {
-            '': 'PENDING',
-            '': 'FILLED',
-            '': 'REJECTED',
-            '': 'CANCELLED',
-            '': 'PARTIAL_FILLED'
-        }
-        return status_map.get(status_name, 'UNKNOWN')

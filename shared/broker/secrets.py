@@ -1,6 +1,5 @@
 import json
 import os
-from pathlib import Path
 from typing import Dict, Optional, List
 import logging
 
@@ -17,12 +16,6 @@ class SecretLoader:
             if account_data:
                 logger.debug(f"Secret loaded from environment: {secret_identifier}")
                 return account_data
-            
-            if secret_identifier.endswith('.json') or '/' in secret_identifier:
-                account_data = SecretLoader._load_from_file(secret_identifier)
-                if account_data:
-                    logger.debug(f"Secret loaded from file: {secret_identifier}")
-                    return account_data
             
             raise FileNotFoundError(f"Secret not found: {secret_identifier}")
         
@@ -68,28 +61,6 @@ class SecretLoader:
             return None
     
     @staticmethod
-    def _load_from_file(file_path: str) -> Dict:
-        try:
-            path = Path(file_path)
-            if not path.exists():
-                raise FileNotFoundError(f"Secret file not found: {file_path}")
-            
-            with open(path, 'r', encoding='utf-8') as f:
-                secret_data = json.load(f)
-            
-            required_fields = ['app_key', 'app_secret', 'account_number', 'account_product']
-            missing_fields = [field for field in required_fields if field not in secret_data]
-            
-            if missing_fields:
-                raise ValueError(f"Missing required fields in secret file: {missing_fields}")
-            
-            return secret_data
-        
-        except Exception as e:
-            logger.error(f"Failed to load secret from file {file_path}: {e}")
-            raise
-    
-    @staticmethod
     def validate_secret(secret_data: Dict) -> bool:
         try:
             required_fields = ['app_key', 'app_secret', 'account_number', 'account_product']
@@ -112,28 +83,22 @@ class SecretLoader:
             return False
     
     @staticmethod
-    def get_real_account_secret(virtual_secret_identifier: str) -> Optional[str]:
+    def get_account_by_token(webhook_token: str) -> Optional[Dict]:
         try:
-            secret_data = SecretLoader.load_secret(virtual_secret_identifier)
+            if SecretLoader._accounts_cache is None:
+                SecretLoader._load_from_env('dummy')
             
-            if not secret_data.get('is_virtual', False):
+            if not SecretLoader._accounts_cache:
                 return None
             
-            real_reference = secret_data.get('real_account_reference')
-            if real_reference:
-                real_account = SecretLoader._load_from_env(real_reference)
-                if real_account:
-                    return real_reference
-                
-                if virtual_secret_identifier.endswith('.json'):
-                    virtual_path = Path(virtual_secret_identifier)
-                    real_path = virtual_path.parent / real_reference
-                    return str(real_path) if real_path.exists() else None
+            for account_id, account_data in SecretLoader._accounts_cache.items():
+                if account_data.get('webhook_token') == webhook_token:
+                    return account_data
             
             return None
         
         except Exception as e:
-            logger.warning(f"Failed to get real account reference: {e}")
+            logger.error(f"Failed to get account by token: {e}")
             return None
     
     @staticmethod

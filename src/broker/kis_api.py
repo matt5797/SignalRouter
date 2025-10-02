@@ -163,18 +163,34 @@ class KisBroker:
         )
         
         orders = result.get('output1', [])
+
+        try:
+            search_order_num = int(order_id.strip().lstrip('0') or '0')
+        except (ValueError, AttributeError) as e:
+            logger.error(f"Invalid order_id format: {order_id}, error: {e}")
+            return {'status': 'INVALID', 'order_id': order_id}
+        
         for order in orders:
-            if order.get('odno') == order_id:
-                return {
-                    'status': self._map_futures_status(order.get('ord_dvsn_name', '')),
-                    'order_id': order_id,
-                    'symbol': order.get('pdno', ''),
-                    'quantity': int(order.get('ord_qty', 0)),
-                    'filled_quantity': int(order.get('ccld_qty', 0)),
-                    'price': float(order.get('ord_unpr', 0)),
-                    'order_time': order.get('ord_tmd', ''),
-                    'side': 'BUY' if order.get('sll_buy_dvsn_cd') == '02' else 'SELL'
-                }
+            found_odno = order.get('odno', '').strip()
+            
+            try:
+                found_order_num = int(found_odno.lstrip('0') or '0')
+                
+                if found_order_num == search_order_num:
+                    return {
+                        'status': self._map_futures_status(order.get('ord_dvsn_name', '')),
+                        'order_id': order_id,
+                        'symbol': order.get('pdno', ''),
+                        'quantity': int(order.get('ord_qty', 0)),
+                        'filled_quantity': int(order.get('tot_ccld_qty', 0)),
+                        'price': float(order.get('avg_idx', 0)),
+                        'order_time': order.get('ord_tmd', ''),
+                        'side': 'BUY' if order.get('sll_buy_dvsn_cd') == '02' else 'SELL'
+                    }
+                    
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Failed to parse odno '{found_odno}': {e}")
+                continue
         
         return {'status': 'NOT_FOUND', 'order_id': order_id}
     

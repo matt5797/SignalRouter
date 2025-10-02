@@ -177,12 +177,30 @@ class KisBroker:
                 found_order_num = int(found_odno.lstrip('0') or '0')
                 
                 if found_order_num == search_order_num:
+                    try:
+                        ord_qty = int(order.get('ord_qty', 0))
+                        tot_ccld_qty = int(order.get('tot_ccld_qty', 0))
+                        rjct_qty = int(order.get('rjct_qty', 0))
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Failed to parse quantities for order {order_id}: {e}")
+                        return {'status': 'ERROR', 'order_id': order_id}
+                    
+                    if rjct_qty > 0:
+                        status = 'REJECTED'
+                    elif tot_ccld_qty >= ord_qty and ord_qty > 0:
+                        status = 'FILLED'
+                    elif tot_ccld_qty > 0:
+                        status = 'PARTIAL_FILLED'
+                    else:
+                        status = 'PENDING'
+                    
                     return {
-                        'status': self._map_futures_status(order.get('ord_dvsn_name', '')),
+                        'status': status,
                         'order_id': order_id,
                         'symbol': order.get('pdno', ''),
-                        'quantity': int(order.get('ord_qty', 0)),
-                        'filled_quantity': int(order.get('tot_ccld_qty', 0)),
+                        'quantity': ord_qty,
+                        'filled_quantity': tot_ccld_qty,
+                        'rejected_quantity': rjct_qty,
                         'price': float(order.get('avg_idx', 0)),
                         'order_time': order.get('ord_tmd', ''),
                         'side': 'BUY' if order.get('sll_buy_dvsn_cd') == '02' else 'SELL'
@@ -192,6 +210,7 @@ class KisBroker:
                 logger.warning(f"Failed to parse odno '{found_odno}': {e}")
                 continue
         
+        logger.warning(f"Order not found: {order_id}")
         return {'status': 'NOT_FOUND', 'order_id': order_id}
     
     def _get_tr_id(self, action: str, force_session: str = None) -> str:
